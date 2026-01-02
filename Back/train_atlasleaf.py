@@ -585,10 +585,23 @@
   },
   {
    "cell_type": "code",
-   "execution_count": null,
+   "execution_count": 18,
    "id": "cb95999e",
    "metadata": {},
-   "outputs": [],
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "\n",
+      "🔍 Validando modelo ONNX...\n",
+      "   ✅ Estrutura ONNX válida\n",
+      "   ✅ Inferência ONNX funcional\n",
+      "   Output shape: (1, 2)\n",
+      "   Classes: 2\n"
+     ]
+    }
+   ],
    "source": [
     "# ==================== 8. VALIDAÇÃO ONNX ====================\n",
     "print(\"\\n🔍 Validando modelo ONNX...\")\n",
@@ -611,10 +624,23 @@
   },
   {
    "cell_type": "code",
-   "execution_count": null,
+   "execution_count": 19,
    "id": "e62c65b3",
    "metadata": {},
-   "outputs": [],
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "\n",
+      "🧪 Testando predição real...\n",
+      "   Label real: Disease\n",
+      "   PyTorch predição: Disease\n",
+      "   ONNX predição: Disease\n",
+      "   ✅ PyTorch e ONNX produzem resultados idênticos!\n"
+     ]
+    }
+   ],
    "source": [
     "# ==================== 9. TESTE PRÁTICO ====================\n",
     "print(\"\\n🧪 Testando predição real...\")\n",
@@ -647,10 +673,20 @@
   },
   {
    "cell_type": "code",
-   "execution_count": null,
+   "execution_count": 20,
    "id": "2c2cc059",
    "metadata": {},
-   "outputs": [],
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "\n",
+      "🧹 Limpando arquivos temporários...\n",
+      "   ✅ Arquivos temporários removidos\n"
+     ]
+    }
+   ],
    "source": [
     "# ==================== 10. LIMPEZA ====================\n",
     "print(\"\\n🧹 Limpando arquivos temporários...\")\n",
@@ -661,10 +697,47 @@
   },
   {
    "cell_type": "code",
-   "execution_count": null,
+   "execution_count": 21,
    "id": "c18b0dc8",
    "metadata": {},
-   "outputs": [],
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "\n",
+      "======================================================================\n",
+      "🎉 ATLASLEAF - TREINAMENTO CONCLUÍDO COM SUCESSO!\n",
+      "======================================================================\n",
+      "\n",
+      "📊 Resumo do Treinamento:\n",
+      "   - Projeto: AtlasLeaf\n",
+      "   - Dataset: SoyNet (9000+ imagens reais de campo)\n",
+      "   - Acurácia Final: 96.24%\n",
+      "   - Classes: ['Disease', 'Healthy']\n",
+      "   - Total de Épocas: 15\n",
+      "\n",
+      "📁 Arquivos Gerados em /Users/rafael/Documents/Personal/Projects/AtlasLeaf/Back:\n",
+      "   1. atlasleaf_soybean.onnx (Modelo ONNX para Java)\n",
+      "   2. atlasleaf_metadata.json (Parâmetros críticos)\n",
+      "   3. atlasleaf_best_model.pth (Checkpoint PyTorch)\n",
+      "\n",
+      "🚀 Próximos Passos - Integração Java Spring Boot:\n",
+      "   1. Copie os arquivos .onnx e .json para seu projeto Java\n",
+      "   2. Adicione dependência: com.microsoft.onnxruntime:onnxruntime:1.16.0\n",
+      "   3. Implemente pré-processamento com os mesmos valores:\n",
+      "      - Resize: 256x256\n",
+      "      - Normalize: mean=[0.485, 0.456, 0.406]\n",
+      "      - Normalize: std=[0.229, 0.224, 0.225]\n",
+      "\n",
+      "💡 Dica de Produção:\n",
+      "   - Este modelo foi treinado com dados REAIS de campo\n",
+      "   - Esperado alta performance em cenários agrícolas reais\n",
+      "   - Considere fazer data augmentation adicional para robustez\n",
+      "======================================================================\n"
+     ]
+    }
+   ],
    "source": [
     "# ==================== 11. RESUMO FINAL ====================\n",
     "print(\"\\n\" + \"=\" * 70)\n",
