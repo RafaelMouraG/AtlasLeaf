@@ -1,0 +1,33 @@
+# macOS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+
+# Dataset folder
+dataset/
+data/
+datasets/
+# --- Ignorar Ambiente Virtual ---
+.venv/
+venv/
+__pycache__/
+
+# --- Ignorar Datasets e Arquivos Pesados ---
+Soybean_Diseases_Dataset/
+SoyNet_Dataset/
+*.zip
+*.rar
+
+# --- Ignorar Modelos Treinados (Artefatos) ---
+# Checkpoints PyTorch (pesados ~45MB)
+*.pth
+
+# Modelos ONNX (pesados ~45MB)
+*.onnx
+*.onnx.data
+
+# --- NÃO ignorar metadados (pequenos, necessários) ---
+# atlasleaf_metadata.json - COMMITAR
+# atlasleaf_v2_metadata.json - COMMITAR
