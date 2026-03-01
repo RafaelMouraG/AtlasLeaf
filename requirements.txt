@@ -17,3 +17,9 @@ pillow==12.1.0
 
 # Utilitários
 numpy==2.4.0
+tqdm  # Progress bars
+
+# Machine Learning (v3.0)
+scikit-learn  # Métricas e splits
+seaborn  # Visualizações
+matplotlib  # Gráficos
