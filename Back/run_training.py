@@ -11,7 +11,7 @@ Uso:
     python run_training.py --mode quality
 
 Ou com opções avançadas:
-    python run_training.py --model efficientnet_b3 --epochs 50 --folds 5
+    python run_training.py --model efficientnet_v2_s --epochs 50 --folds 5
 """
 
 import argparse

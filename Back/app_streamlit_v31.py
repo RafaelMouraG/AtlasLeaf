@@ -20,8 +20,9 @@ try:
     from data_pipeline.model_v31 import create_model
     import torch
     V31_AVAILABLE = True
-except ImportError:
+except ImportError as e:
     V31_AVAILABLE = False
+    print(f"⚠️  Pipeline v3.1 não disponível: {e}")
 
 
 # ==================== CONFIGURAÇÃO DA PÁGINA ====================
@@ -46,8 +47,8 @@ def load_model():
     """Carrega modelo ONNX e metadados."""
     base_dir = Path(__file__).parent
     
-    # Procura por v3.1 primeiro, depois v3.0
-    for version in ["v31", "v3"]:
+    # Prefere o modelo de campo (7 classes), depois v3.1, depois v3.0
+    for version in ["field7", "v31", "v3"]:
         onnx_path = base_dir / f"atlasleaf_{version}_diseases.onnx"
         meta_path = base_dir / f"atlasleaf_{version}_metadata.json"
         
@@ -65,7 +66,10 @@ def load_pytorch_model():
     """Carrega modelo PyTorch diretamente (para TTA)."""
     base_dir = Path(__file__).parent
     
-    model_path = base_dir / "atlasleaf_v31_best_model.pth"
+    # Prefere o checkpoint do modelo de campo (camera-split); fallback p/ o antigo
+    model_path = base_dir / "atlasleaf_v31_sourcesplit_best.pth"
+    if not model_path.exists():
+        model_path = base_dir / "atlasleaf_v31_best_model.pth"
     if not model_path.exists():
         return None, None
     
@@ -73,7 +77,7 @@ def load_pytorch_model():
     
     from data_pipeline.model_v31 import create_model
     model = create_model(
-        model_name=checkpoint.get('config', {}).get('model_name', 'efficientnet_b3'),
+        model_name=checkpoint.get('config', {}).get('model_name', 'efficientnet_v2_s'),
         num_classes=checkpoint.get('config', {}).get('num_classes', 15),
     )
     model.load_state_dict(checkpoint['model_state_dict'])
@@ -92,7 +96,15 @@ def preprocess_image(image: Image.Image, metadata: dict) -> np.ndarray:
     
     if image.mode != 'RGB':
         image = image.convert('RGB')
-    
+
+    # Recorte de folha (mesmo do treino) se ativado na metadata
+    if prep.get('leaf_crop'):
+        try:
+            from data_pipeline.leaf_segmentation import LeafCropper
+            image = LeafCropper(mask_background=prep.get('leaf_crop_mask_bg', False))(image)
+        except Exception:
+            pass
+
     image = image.resize((img_size, img_size), Image.Resampling.BILINEAR)
     
     img_array = np.array(image).astype(np.float32) / 255.0
@@ -100,6 +112,47 @@ def preprocess_image(image: Image.Image, metadata: dict) -> np.ndarray:
     img_array = (img_array - mean) / std
     
     return np.expand_dims(img_array, axis=0).astype(np.float32)
+
+
+# ==================== FORMATAÇÃO / FILTRO DE CLASSES ====================
+def format_results(probs, metadata: dict) -> dict:
+    """
+    Constrói a lista de resultados considerando SÓ as classes suportadas
+    (metadata['supported_class_ids']) e renormaliza as probabilidades entre elas.
+    Aplica o limiar de confiança (metadata['confidence_threshold']).
+    """
+    classes = metadata['classes']
+    by_id = {int(c['id']): c for c in classes}
+    supported = metadata.get('supported_class_ids')
+    if not supported:
+        supported = [int(c['id']) for c in classes]  # retrocompatível: usa todas
+
+    # Renormaliza as probabilidades entre as classes suportadas
+    sup_probs = {cid: float(probs[cid]) for cid in supported if cid < len(probs)}
+    total = sum(sup_probs.values()) or 1.0
+
+    results = []
+    for cid, p in sup_probs.items():
+        info = by_id.get(cid, {})
+        results.append({
+            'id': cid,
+            'name': info.get('name', str(cid)),
+            'friendly_name': info.get('friendly_name', str(cid)),
+            'scientific_name': info.get('scientific_name', ''),
+            'severity': info.get('severity', 'medium'),
+            'probability': 100.0 * p / total,
+        })
+    results.sort(key=lambda x: x['probability'], reverse=True)
+
+    threshold = float(metadata.get('confidence_threshold', 0.7))
+    top1 = results[0]['probability'] / 100 if results else 0.0
+    is_uncertain = top1 < threshold
+    if is_uncertain:
+        rec = f"⚠️ BAIXA CONFIANÇA (<{threshold*100:.0f}%) — verifique visualmente ou capture nova foto"
+    else:
+        rec = "✅ Predição confiável"
+    return {'results': results, 'is_uncertain': is_uncertain,
+            'recommendation': rec, 'confidence': top1}
 
 
 # ==================== INFERÊNCIA COM TTA ====================
@@ -119,47 +172,19 @@ def predict_with_tta(image: Image.Image, metadata: dict) -> dict:
     
     # Usa pipeline v3.1 com TTA
     device = torch.device('cpu')
-    pipeline = AtlasLeafInference(model, device, use_tta=True)
+    prep = metadata.get('preprocessing', {})
+    pipeline = AtlasLeafInference(
+        model, device, use_tta=True,
+        leaf_crop=prep.get('leaf_crop', False),
+        leaf_crop_mask_bg=prep.get('leaf_crop_mask_bg', False),
+    )
     
-    # Converte PIL para tensor
-    from torchvision import transforms
-    transform = transforms.Compose([
-        transforms.Resize((384, 384)),
-        transforms.ToTensor(),
-        transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
-    ])
-    
-    img_tensor = transform(image).unsqueeze(0).to(device)
-    
-    # Predição com TTA
-    with torch.no_grad():
-        result = pipeline.predict(image, return_details=False)
-    
-    # Formata resultado
-    classes = metadata['classes']
-    probs = result['all_probabilities']
-    
-    results = []
-    for i, prob in enumerate(probs):
-        if i < len(classes):
-            class_info = classes[i]
-            results.append({
-                'id': i,
-                'name': class_info['name'],
-                'friendly_name': class_info['friendly_name'],
-                'scientific_name': class_info.get('scientific_name', ''),
-                'severity': class_info.get('severity', 'medium'),
-                'probability': prob * 100,
-            })
-    
-    results.sort(key=lambda x: x['probability'], reverse=True)
-    
-    return {
-        'results': results,
-        'is_uncertain': result['is_uncertain'],
-        'recommendation': result['recommendation'],
-        'confidence': result['confidence'],
-    }
+    # CORREÇÃO: Passa a imagem PIL diretamente para a pipeline
+    # A pipeline aplica as transformações TTA internamente
+    result = pipeline.predict(image, return_details=False)
+
+    # Formata considerando só as classes suportadas + limiar de confiança
+    return format_results(result['all_probabilities'], metadata)
 
 
 def predict_simple(image: Image.Image, metadata: dict) -> dict:
@@ -175,35 +200,9 @@ def predict_simple(image: Image.Image, metadata: dict) -> dict:
     # Softmax
     exp_logits = np.exp(logits - np.max(logits))
     probs = exp_logits / exp_logits.sum()
-    
-    # Formata resultado
-    classes = metadata['classes']
-    results = []
-    
-    for i, prob in enumerate(probs):
-        if i < len(classes):
-            class_info = classes[i]
-            results.append({
-                'id': i,
-                'name': class_info['name'],
-                'friendly_name': class_info['friendly_name'],
-                'scientific_name': class_info.get('scientific_name', ''),
-                'severity': class_info.get('severity', 'medium'),
-                'probability': float(prob * 100),
-            })
-    
-    results.sort(key=lambda x: x['probability'], reverse=True)
-    
-    # Detecção simples de incerteza
-    top1_conf = results[0]['probability'] / 100
-    is_uncertain = top1_conf < 0.7
-    
-    return {
-        'results': results,
-        'is_uncertain': is_uncertain,
-        'recommendation': "Confiança moderada - verifique visualmente" if is_uncertain else "Predição confiável",
-        'confidence': top1_conf,
-    }
+
+    # Formata considerando só as classes suportadas + limiar de confiança
+    return format_results(probs, metadata)
 
 
 # ==================== INTERFACE ====================
@@ -271,12 +270,18 @@ def main():
                 st.write(f"**Versão:** {metadata['version']}")
                 st.write(f"**Arquitetura:** {metadata['model']}")
             with col2:
-                st.write(f"**Classes:** {metadata['num_classes']}")
+                n_sup = len(metadata.get('supported_class_ids') or metadata.get('classes', []))
+                st.write(f"**Classes:** {n_sup}")
                 metrics = metadata.get('metrics', {})
-                st.write(f"**Acurácia:** {metrics.get('test_accuracy', 0):.1f}%")
+                acc = metrics.get('test_accuracy')
+                if acc is None:
+                    bal = metadata.get('evaluation', {}).get('test_balanced_acc')
+                    acc = bal * 100 if bal is not None else None
+                st.write(f"**Acurácia:** {acc:.1f}%" if acc is not None else "**Acurácia:** N/A")
             with col3:
                 st.write(f"**Dataset:** {metadata.get('dataset', 'N/A')}")
-                st.write(f"**Imagens:** {metadata.get('total_images', 'N/A'):,}")
+                total = metadata.get('total_images')
+                st.write(f"**Imagens:** {total:,}" if isinstance(total, (int, float)) else "**Imagens:** N/A")
     
     except FileNotFoundError as e:
         st.error(f"❌ {e}")
@@ -317,7 +322,7 @@ def main():
         
         with col1:
             st.markdown("#### 🖼️ Imagem")
-            st.image(image, use_container_width=True)
+            st.image(image, width="stretch")
         
         with col2:
             st.markdown("#### 🔬 Diagnóstico")

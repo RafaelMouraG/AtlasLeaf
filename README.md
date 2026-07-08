@@ -1,476 +1,214 @@
 # 🌿 AtlasLeaf
 
-> Sistema de Diagnóstico de Doenças em Folhas de Soja usando Inteligência Artificial
+> Diagnóstico de doenças em folhas de soja por visão computacional — com **avaliação honesta** de generalização para campo.
 
-[![Python](https://img.shields.io/badge/Python-3.12-blue.svg)](https://python.org)
-[![PyTorch](https://img.shields.io/badge/PyTorch-2.9+-red.svg)](https://pytorch.org)
+[![Python](https://img.shields.io/badge/Python-3.14-blue.svg)](https://python.org)
+[![PyTorch](https://img.shields.io/badge/PyTorch-2.9-red.svg)](https://pytorch.org)
 [![ONNX](https://img.shields.io/badge/ONNX-Runtime-green.svg)](https://onnxruntime.ai)
-[![Streamlit](https://img.shields.io/badge/Streamlit-Interface-ff4b4b.svg)](https://streamlit.io)
-[![Spring Boot](https://img.shields.io/badge/Spring%20Boot-3.2-brightgreen.svg)](https://spring.io/projects/spring-boot)
+[![Streamlit](https://img.shields.io/badge/Streamlit-1.59-ff4b4b.svg)](https://streamlit.io)
 
 ---
 
-## 📋 Índice
+## 🎯 Sobre
 
-- [Sobre o Projeto](#-sobre-o-projeto)
-- [Versões do Sistema](#-versões-do-sistema)
-- [Como Funciona](#-como-funciona)
-- [Arquitetura do Sistema](#-arquitetura-do-sistema)
-- [Instalação](#-instalação)
-- [Uso](#-uso)
-- [Estrutura do Projeto](#-estrutura-do-projeto)
-- [Pipeline de Machine Learning](#-pipeline-de-machine-learning)
-- [API REST (Java Spring)](#-api-rest-java-spring)
-- [Roadmap](#-roadmap)
+O **AtlasLeaf** classifica doenças foliares de soja a partir de uma foto, para apoiar decisões na
+lavoura. O modelo atual (**field7**) cobre **7 classes de campo** com uma EfficientNet-V2-S, e — mais
+importante — é avaliado de forma **honesta** quanto a generalizar para imagens de fora do dataset de treino.
 
----
+### A lição central do projeto
 
-## 🎯 Sobre o Projeto
+Uma primeira versão atingiu **98,5% na validação** e mesmo assim **falhava em imagens externas**. A
+investigação mostrou o porquê: cada doença vinha majoritariamente de **uma única fonte** (câmera/região),
+então um split aleatório deixava o modelo **decorar a assinatura da fonte** (câmera, compressão, fundo) em
+vez da lesão. Provado com um *probe* linear: dá para prever a **fonte** da foto com **99% de acerto**.
 
-O **AtlasLeaf** é um sistema de visão computacional que utiliza deep learning para identificar doenças em folhas de soja. O projeto foi desenvolvido para auxiliar o meu dia a dia na fazenda.
-
-### Funcionalidades
-
-- ✅ Detecção de folhas doentes vs saudáveis (v1.0)
-- ✅ Identificação de 10 doenças específicas (v2.0)
-- ✅ Sistema em cascata para maior precisão
-- ✅ Interface web com Streamlit
+> **Regra do projeto:** avaliar sempre com **split por fonte/câmera** (treinar num domínio, testar em
+> outro). Split aleatório infla a métrica e mente sobre o desempenho real em campo.
 
 ---
 
-## 🔄 Versões do Sistema
+## 🧠 Modelo atual — `field7`
 
-### v1.0 - Classificação Binária
-| Classe | Descrição |
-|--------|-----------|
-| ✅ **Healthy** | Folha saudável |
-| 🦠 **Disease** | Folha com doença |
+**Arquitetura:** EfficientNet-V2-S (ImageNet) · backbone congelado, só a cabeça treinada · entrada 384×384.
 
-**Dataset:** SoyNet (3.720 imagens)
+**7 classes de campo** (as com lastro real de campo no ASDID):
 
-### v2.0 - Classificação Multi-Classe (10 Doenças)
-| Doença | Nome Técnico | Severidade |
-|--------|--------------|------------|
-| 🔴 Ferrugem Asiática | *Phakopsora pachyrhizi* | Alta |
-| 🔴 Síndrome da Morte Súbita | *Fusarium virguliforme* | Alta |
-| 🔴 Podridão do Colo | *Sclerotium rolfsii* | Alta |
-| 🟠 Mancha Bacteriana | *Pseudomonas syringae* | Média |
-| 🟠 Mancha Marrom | *Septoria glycines* | Média |
-| 🟠 Septoriose | *Septoria* spp. | Média |
-| 🟠 Crestamento | Queima foliar | Média |
-| 🟡 Vírus do Mosaico | *SMV* | Baixa |
-| 🟡 Mosaico Amarelo | *BYMV* | Baixa |
-| 🟡 Oídio | *Microsphaera diffusa* | Baixa |
+| Classe | Nome | Científico |
+|---|---|---|
+| `healthy` | Folha sadia | — |
+| `asian_rust` | Ferrugem asiática | *Phakopsora pachyrhizi* |
+| `target_spot` | Mancha alvo | *Corynespora cassiicola* |
+| `cercospora_blight` | Crestamento de cercospora | *Cercospora kikuchii* |
+| `downy_mildew` | Míldio | *Peronospora manshurica* |
+| `potassium_deficiency` | Deficiência de potássio | — (nutricional) |
+| `frogeye_leaf_spot` | Mancha olho-de-rã | *Cercospora sojina* |
 
-**Dataset:** Soybean Diseased Leaf Dataset - Kaggle (609 imagens)
+### Resultados (honestos)
 
-### Sistema em Cascata (Recomendado)
-Combina v1.0 + v2.0 para maior precisão:
+Avaliação por **split de câmera** (treina Canon, testa Motorola — proxy campo→campo):
 
-```
-📸 Imagem
-    ↓
-┌─────────────────────────┐
-│ ETAPA 1: v1.0           │
-│ Está doente? (3.720 img)│
-└─────────────────────────┘
-    ↓
-  Saudável? → ✅ "Folha Saudável"
-    ↓
-  Doente?
-    ↓
-┌─────────────────────────┐
-│ ETAPA 2: v2.0           │
-│ Qual doença? (609 img)  │
-└─────────────────────────┘
-    ↓
-🦠 Diagnóstico específico
-```
+| Métrica | Valor |
+|---|---|
+| Acurácia balanceada (câmera não vista) | **~75%** |
+| In-domain (mesma câmera) | ~88–98% *(otimista, não representa deploy)* |
+
+Recall por classe (câmera não vista): potássio 86% · míldio 87% · sadia 91% · mancha alvo 77% ·
+ferrugem 70% · olho-de-rã 68% · **crestamento de cercospora 42%** (classe mais fraca).
+
+> ⚠️ Em uma lavoura **diferente** (outra região/telefone/cultivar) o número real tende a ficar **abaixo
+> de 75%** — Canon e Motorola dividem as mesmas parcelas. O teste que fecha a questão é rodar com fotos
+> reais da sua lavoura (ver `test_field.py`).
+
+**Descartado por não ajudar:** recorte/segmentação de folha (o atalho de fonte vive nos pixels da folha,
+não no fundo) e fine-tune completo (distorce as features e generaliza **pior** que o backbone congelado).
 
 ---
 
-## 🧠 Como Funciona
-
-### Fluxo Simplificado
+## ⚙️ Como funciona
 
 ```
-📷 Imagem → 🔄 Pré-processamento → 🧠 Modelo IA → 📊 Diagnóstico
+📷 Foto → redimensiona 384×384 → normaliza (ImageNet) → EfficientNet-V2-S → softmax nas 7 classes → diagnóstico + confiança
 ```
 
-### Pré-processamento
-
-```python
-# Transformações aplicadas:
-1. Resize → 256x256 pixels
-2. Conversão → RGB (3 canais)
-3. Normalização → valores entre 0-1
-4. Padronização ImageNet → mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]
-5. Formato → Tensor [1, 3, 256, 256]
-```
-
-### Inferência
-
-```python
-# Exemplo de saída v1.0:
-[0.85, 0.15]  # [Disease: 85%, Healthy: 15%]
-
-# Exemplo de saída v2.0:
-[0.02, 0.01, 0.05, 0.03, 0.02, 0.01, 0.75, 0.08, 0.02, 0.01]  # Ferrugem: 75%
-```
-
----
-
-## 🏗️ Arquitetura do Sistema
-
-```
-┌─────────────────────────────────────────────────────────────────────────┐
-│                         ATLASLEAF - ARQUITETURA                         │
-├─────────────────────────────────────────────────────────────────────────┤
-│                                                                         │
-│  ┌──────────────┐    ┌──────────────────┐    ┌────────────────────┐    │
-│  │   Frontend   │    │     Backend      │    │      Modelos       │    │
-│  ├──────────────┤    ├──────────────────┤    ├────────────────────┤    │
-│  │  Streamlit   │───▶│  Python/Spring   │───▶│   ONNX Runtime     │    │
-│  │              │    │                  │    │                    │    │
-│  │  • Upload    │    │  • Cascade Logic │    │  • v1.0 (2 cls)    │    │
-│  │  • Display   │    │  • Preprocessing │    │  • v2.0 (10 cls)   │    │
-│  │  • Ranking   │    │  • REST API      │    │  • ResNet18        │    │
-│  └──────────────┘    └──────────────────┘    └────────────────────┘    │
-│                                                                         │
-└─────────────────────────────────────────────────────────────────────────┘
-```
-
-### Tecnologias
-
-| Componente | Tecnologia | Versão |
-|------------|------------|--------|
-| **Treinamento** | PyTorch | 2.9+ |
-| **Modelo** | ResNet18 | ImageNet pretrained |
-| **Inferência** | ONNX Runtime | 1.16+ |
-| **Interface Web** | Streamlit | 1.29+ |
-| **API REST** | Spring Boot | 3.2 |
+- **Sem recorte** de folha (testado e descartado).
+- **Limiar de confiança** (padrão 0,6): abaixo disso a predição é marcada como *baixa confiança* e
+  sugere revisão humana. Em teste, no limiar 0,6 o modelo defere ~parte dos casos mas acerta quase 100%
+  nos que responde — bom para uso como apoio à decisão.
+- A saída é renormalizada **apenas entre as 7 classes suportadas** (o `.onnx` tem 15 saídas por legado;
+  `supported_class_ids` na metadata define quais valem).
 
 ---
 
 ## 📦 Instalação
 
-### Pré-requisitos
-
-- Python 3.10+
-- pip ou conda
-- (Opcional) Java 17+ para API Spring
-
-### Instalação Python
-
 ```bash
-# 1. Clone o repositório
 git clone https://github.com/RafaelMouraG/AtlasLeaf.git
 cd AtlasLeaf
-
-# 2. Crie um ambiente virtual
 python -m venv .venv
-source .venv/bin/activate  # Linux/macOS
-# .venv\Scripts\activate   # Windows
-
-# 3. Instale as dependências
-pip install -r requirements.txt
-
-# 4. (Opcional) Para treinar os modelos:
-pip install torch torchvision onnx onnxruntime onnxscript
+source .venv/bin/activate          # Windows: .venv\Scripts\activate
+pip install -r requirements.txt    # streamlit>=1.59 (versões antigas quebram no Python 3.14)
 ```
 
 ---
 
 ## 🚀 Uso
 
-### Interface Web - Sistema em Cascata (Recomendado)
-
-```bash
-source .venv/bin/activate
-cd Back
-streamlit run app_streamlit_cascade.py
-```
-Acesse: **http://localhost:8501**
-
-### Interface Web - v1.0 (Disease/Healthy)
-
-```bash
-streamlit run app_streamlit.py
-```
-
-### Interface Web - v2.0 (10 Doenças)
-
-```bash
-streamlit run app_streamlit_v2.py
-```
-
-### Treinamento dos Modelos
+### Interface web
 
 ```bash
 cd Back
-
-# v1.0 - Classificação Binária
-# Abra train_atlasleaf.py no VS Code como notebook
-
-# v2.0 - Multi-Classe (10 doenças)
-# Abra train_atlasleaf_v2.ipynb no VS Code/Jupyter
+../.venv/bin/streamlit run app_streamlit_v31.py
 ```
+Carrega automaticamente o modelo `field7`, mostra as 7 doenças e sinaliza baixa confiança.
+
+### Testar com suas próprias fotos (o número que importa)
+
+Organize `minhas_fotos/{nome_da_doenca}/*.jpg` e rode:
+```bash
+cd Back
+../.venv/bin/python test_field.py --dir minhas_fotos
+```
+Reporta acurácia, acurácia balanceada, matriz de confusão e a acurácia **só nas predições confiantes**.
+
+### Treinar (reprodutível, ~2 min/época no dataset reduzido)
+
+```bash
+cd Back
+../.venv/bin/python train_atlasleaf_v31.py --data-dir datasets/unified_resized \
+    --source-split --split-file splits_camera.json \
+    --freeze-backbone --domain-aug --epochs 40 --ckpt-out atlasleaf_field7_best.pth
+# exportar o ONNX + metadata a partir do checkpoint:
+../.venv/bin/python export_field7.py --ckpt atlasleaf_field7_best.pth
+```
+
+> 💡 Em testes, **sempre** use `--ckpt-out` com um nome próprio para não sobrescrever o modelo bom.
 
 ---
 
-## 📁 Estrutura do Projeto
+## 📁 Estrutura do projeto
 
 ```
 AtlasLeaf/
-├── 📄 README.md
-├── 📄 requirements.txt
-├── 📄 LICENSE
-│
+├── README.md · requirements.txt · LICENSE
 └── Back/
+    ├── app_streamlit_v31.py          # Interface web (modelo field7)
+    ├── train_atlasleaf_v31.py        # Treino c/ split por fonte/câmera, freeze, domain-aug
+    ├── export_field7.py              # Exporta ONNX + metadata das 7 classes
+    ├── test_field.py                 # Avaliação com fotos reais do usuário
+    ├── integrate_bahia.py            # Junta dataset novo (Bahia) ao ASDID + split por fazenda
+    ├── preprocess_leaf_crop.py       # Pré-processa dataset (--no-crop reduz resolução p/ treino rápido)
     │
-    ├── 🌐 Interfaces Web
-    │   ├── app_streamlit.py          # v1.0 (Disease/Healthy)
-    │   ├── app_streamlit_v2.py       # v2.0 (10 doenças)
-    │   └── app_streamlit_cascade.py  # Sistema em cascata ⭐
+    ├── data_pipeline/
+    │   ├── config_v31.py             # Configuração de treino
+    │   ├── model_v31.py              # EfficientNet-V2-S, Focal Loss, Mixup/CutMix
+    │   ├── inference_v31.py          # Pipeline de inferência (TTA, incerteza)
+    │   ├── augmentation.py           # Augmentations de campo
+    │   ├── domain_aug.py             # Augmentation de domínio (resolução/JPEG/cor)
+    │   ├── leaf_segmentation.py      # Recorte de folha (disponível, mas descartado)
+    │   ├── source_split.py           # Split por FONTE (avaliação honesta)
+    │   └── camera_split.py           # Split por CÂMERA (proxy campo→campo)
     │
-    ├── 📚 Treinamento
-    │   ├── train_atlasleaf.py        # Notebook v1.0
-    │   ├── train_atlasleaf_v2.ipynb  # Notebook v2.0
-    │   └── train_atlasleaf_v3.ipynb  # Notebook v3.0 (Big Data) ⭐
+    ├── docs/
+    │   ├── protocolo_coleta.md       # Como coletar o dataset do oeste baiano
+    │   └── prompt_busca_datasets.md  # Prompt p/ Claude/Gemini acharem datasets complementares
     │
-    ├── 🔧 Data Pipeline (v3.0)
-    │   └── data_pipeline/
-    │       ├── __init__.py
-    │       ├── config.py             # Taxonomia unificada (17 classes)
-    │       ├── dataset_unifier.py    # Unifica múltiplos datasets
-    │       ├── losses.py             # Focal Loss, Class-Balanced
-    │       └── augmentation.py       # Augmentation adaptativa
-    │
-    ├── 🧠 Modelos v1.0
-    │   ├── atlasleaf_soybean.onnx
-    │   ├── atlasleaf_metadata.json
-    │   └── atlasleaf_best_model.pth
-    │
-    ├── 🧠 Modelos v2.0
-    │   ├── atlasleaf_v2_diseases.onnx
-    │   ├── atlasleaf_v2_metadata.json
-    │   └── atlasleaf_v2_best_model.pth
-    │
-    ├── 📊 Datasets (não versionados)
-    │   ├── SoyNet_Dataset/           # v1.0 (3.720 imgs)
-    │   ├── Soybean_Diseases_Dataset/ # v2.0 Kaggle (609 imgs)
-    │   └── datasets/                 # v3.0 Big Data
-    │       ├── raw/                  # Datasets originais
-    │       │   ├── ASDID/            # Auburn (~40GB)
-    │       │   ├── Digipathos/       # Embrapa
-    │       │   └── INSECT12C/        # Pragas
-    │       └── unified/              # Dataset unificado
-    │
-    └── atlasleaf-api/                # API Spring Boot 🚧
-        ├── pom.xml
-        └── src/
-            └── main/
-                ├── java/com/atlasleaf/
-                │   ├── config/
-                │   ├── controller/
-                │   ├── service/
-                │   ├── model/
-                │   │   ├── dto/
-                │   │   └── domain/
-                │   └── exception/
-                └── resources/
-                    ├── application.yml
-                    └── models/
+    ├── atlasleaf_field7_*.{onnx,json,pth}   # Modelo atual + metadata
+    └── datasets/ (não versionado)
+        ├── unified/          # ASDID + Kaggle + SoyNet unificados
+        ├── unified_resized/  # Imagens 768px (treino rápido, sem recorte)
+        └── unified_cropped/  # Imagens recortadas (experimento descartado)
 ```
 
 ---
 
-## 🔬 Pipeline de Machine Learning
+## 🔬 Metodologia
 
-### Estratégia de Dados v3.0
-
-> ⚠️ **Problema identificado**: O dataset Kaggle (609 imgs) é insuficiente para generalização em campo.
-
-#### Datasets Recomendados (Big Data)
-
-| Dataset | Imagens | Fonte | Uso |
-|---------|---------|-------|-----|
-| **ASDID** (Auburn) | ~10.000+ | [Zenodo](https://zenodo.org) | Treino principal |
-| **SoyNet** | ~9.300 | [Mendeley](https://data.mendeley.com) | Validação mobile |
-| **Digipathos** (Embrapa) | ~372+ | [Embrapa](https://www.digipathos.cnptia.embrapa.br/) | Gold standard |
-| **INSECT12C** (UFGD) | ~6.000 | GitHub | Exclusão de pragas |
-| Kaggle (atual) | 609 | Kaggle | Legado |
-
-#### Pipeline de Unificação
-
-```bash
-# Após baixar os datasets, execute:
-cd Back
-python data_pipeline/dataset_unifier.py --datasets asdid soynet kaggle_soybean
-
-# Isso criará:
-# - datasets/unified/        → Imagens organizadas por classe
-# - datasets/unified/manifest.json → Metadados
-# - datasets/unified/splits.json   → Train/Val/Test
-```
-
-#### Técnicas para Desequilíbrio de Classes
-
-| Técnica | Implementação | Arquivo |
-|---------|---------------|---------|
-| **Focal Loss** | γ=2.0, reduz peso de exemplos fáceis | `data_pipeline/losses.py` |
-| **Class-Balanced Loss** | Pesos pelo número efetivo de amostras | `data_pipeline/losses.py` |
-| **Weighted Sampler** | Oversampling de classes minoritárias | `train_atlasleaf_v3.ipynb` |
-| **Augmentation Adaptativa** | Mais agressiva para classes raras | `data_pipeline/augmentation.py` |
-| **Mixup/CutMix** | Regularização por interpolação | `data_pipeline/losses.py` |
-
-### Dataset v1.0: SoyNet
-
-- **Fonte**: [Mendeley Data](https://data.mendeley.com/datasets/w2r855hpx8/2)
-- **Imagens**: 3.720 (Disease + Healthy)
-- **Resolução**: 256x256 pixels
-
-### Dataset v2.0: Soybean Diseased Leaf
-
-- **Fonte**: Kaggle
-- **Imagens**: 609 (10 classes de doenças)
-- **Desafio**: Dataset desbalanceado (5-137 imgs/classe)
-
-### Modelo: ResNet18 (Transfer Learning)
-
-```
-ResNet18 (ImageNet)
-    │
-    ├──▶ v1.0: fc → 2 classes
-    │
-    └──▶ v2.0: layer3 + layer4 + fc → 10 classes
-              (fine-tuning mais profundo)
-```
-
-### Treinamento v2.0 - Técnicas Especiais
-
-| Técnica | Propósito |
-|---------|-----------|
-| **WeightedRandomSampler** | Balanceamento de classes |
-| **Class-weighted Loss** | Penaliza erros em classes raras |
-| **Heavy Augmentation** | RandomCrop, Perspective, GaussianBlur, Erasing |
-| **OneCycleLR** | Scheduler com warmup |
-| **Early Stopping** | Patience=10 épocas |
-| **Gradient Clipping** | Estabilidade do treino |
+- **Avaliação honesta:** `source_split.py` (segura uma fonte inteira p/ teste) e `camera_split.py`
+  (treina numa câmera, testa em outra). Nunca split aleatório para medir generalização.
+- **Balanceamento suave:** `WeightedRandomSampler` com peso `1/√(contagem)` — sem empilhar oversampling
+  + pesos de loss (o empilhamento colapsava as classes grandes).
+- **Domain augmentation:** resolução/JPEG/cor aleatórios para apagar a assinatura de fonte nos pixels.
+- **Backbone congelado:** preserva as features transferíveis do ImageNet (generaliza melhor que fine-tune).
+- **Early stopping** por **acurácia balanceada** da validação (não pela loss, que engana com pesos).
 
 ---
 
-## ☕ API REST (Java Spring)
+## ⚠️ Limitações (honestas)
 
-### Endpoints (em desenvolvimento)
-
-```
-POST /api/v1/diagnostic           # Sistema cascata completo
-POST /api/v1/diagnostic/detect    # Só v1.0 (disease/healthy)
-POST /api/v1/diagnostic/identify  # Só v2.0 (10 doenças)
-GET  /api/v1/diseases             # Lista doenças detectáveis
-GET  /api/v1/health               # Healthcheck
-```
-
-### Tecnologias
-
-- **Spring Boot 3.2** - Framework
-- **ONNX Runtime Java** - Inferência
-- **SpringDoc OpenAPI** - Swagger automático
-- **Lombok** - Redução de boilerplate
-
-### Executar
-
-```bash
-cd Back/atlasleaf-api
-mvn spring-boot:run
-```
-
-Swagger UI: **http://localhost:8080/api/swagger-ui.html**
+- Apenas **7 doenças** têm lastro de campo confiável. As demais (estúdio/fonte única) foram **removidas**
+  do produto — não são confiáveis em campo e poluiriam as predições.
+- **Cercospora** é a classe mais fraca (~42% recall) — precisa de mais dados.
+- O ~75% é **cross-camera**, ainda otimista para uma lavoura nova. Valide com fotos suas.
+- O dataset base (ASDID) é campo real, mas de **poucas câmeras e provável região única** — daí o plano
+  de coleta abaixo.
 
 ---
 
 ## 🗺️ Roadmap
 
-### ✅ v1.0 - Classificação Binária
-- [x] Treinamento com SoyNet Dataset
-- [x] Classificação: Healthy vs Disease
-- [x] Interface Streamlit
-- [x] Export ONNX
+- [x] Modelo field7 (7 doenças) com avaliação honesta por câmera
+- [x] Interface web + limiar de confiança
+- [x] Ferramentas de avaliação com fotos reais (`test_field.py`)
+- [x] Protocolo de coleta do oeste baiano (`docs/protocolo_coleta.md`)
+- [x] Integração de dataset novo + split por fazenda (`integrate_bahia.py`)
+- [ ] **Coletar dataset do oeste baiano** (várias fazendas/telefones) para virar *in-domain* na região
+- [ ] Buscar datasets públicos complementares de campo (`docs/prompt_busca_datasets.md`)
+- [ ] Reforçar cercospora e reavaliar com split por região
+- [ ] Expandir para doenças novas do Cerrado (antracnose, mofo branco, ...)
 
-### ✅ v2.0 - Classificação Multi-Classe
-- [x] 10 doenças específicas
-- [x] Dataset Kaggle integrado
-- [x] Técnicas para dataset pequeno
-- [x] Sistema em cascata (v1+v2)
+### Histórico
 
-### � v3.0 - Big Data & Precisão (Em Desenvolvimento)
-- [x] Pipeline de unificação de datasets
-- [x] Focal Loss para desequilíbrio de classes
-- [x] Data Augmentation adaptativa
-- [ ] Integração ASDID (Auburn - ~10k imgs)
-- [ ] Integração Embrapa Digipathos
-- [ ] 15+ classes de doenças
-- [ ] Detecção de pragas (INSECT12C)
-
-### 🔮 v4.0 - Mobile & Expansão (Futuro)
-- [ ] Aplicativo móvel (Flutter/React Native)
-- [ ] Imagens multiespectrais
-- [ ] Integração com drones (UAV)
-- [ ] Geolocalização de focos
-
----
-
-## �� Resultados
-
-| Modelo | Classes | Dataset | Acurácia | Status |
-|--------|---------|---------|----------|--------|
-| v1.0 | 2 | 3.720 imgs | ~85% | ✅ Produção |
-| v2.0 | 10 | 609 imgs | ~65%* | ✅ Produção |
-| Cascata | 2→10 | Combinado | Melhor precisão | ✅ Produção |
-| **v3.0** | 15 | 10k+ imgs | Em treinamento | 🚧 Dev |
-
-*v2.0 limitado pelo tamanho do dataset - v3.0 resolverá isso
-
-### Distribuição de Classes (Problema Atual)
-
-| Classe | v2.0 (Kaggle) | Status |
-|--------|---------------|--------|
-| Oídio | 137 | 🟡 |
-| Morte Súbita | 110 | 🟡 |
-| Mosaico Amarelo | 110 | 🟡 |
-| Ferrugem | 65 | 🔴 Crítico |
-| Podridão Colo | 62 | 🔴 |
-| M. Bacteriana | 50 | 🔴 |
-| M. Marrom | 27 | 🔴 |
-| V. Mosaico | 22 | 🔴 |
-| Septoriose | 21 | 🔴 |
-| **Crestamento** | **5** | 🔴 **Gravíssimo** |
-
-> A v3.0 com ASDID terá ~1000+ imagens de Ferrugem Asiática!
-
----
-
-## 🤝 Contribuindo
-
-Contribuições são bem-vindas!
-
-1. Fork o projeto
-2. Crie uma branch (`git checkout -b feature/nova-funcionalidade`)
-3. Commit suas mudanças (`git commit -m 'Adiciona nova funcionalidade'`)
-4. Push para a branch (`git push origin feature/nova-funcionalidade`)
-5. Abra um Pull Request
+- **v1.0** — binário sadia/doente (SoyNet).
+- **v2.0** — 10 doenças (Kaggle, dataset pequeno).
+- **v3.0/3.1** — unificação de datasets (ASDID + Kaggle + SoyNet) e a descoberta do viés de fonte.
+- **field7** *(atual)* — foco nas 7 classes de campo, avaliação honesta, ~75% cross-camera.
 
 ---
 
 ## 📝 Licença
 
-Este projeto está sob a licença MIT. Veja o arquivo [LICENSE](LICENSE) para mais detalhes.
-
----
+MIT — veja [LICENSE](LICENSE).
 
 ## 👨‍💻 Autor
 
-**Rafael Moura**
-
-- GitHub: [@RafaelMouraG](https://github.com/RafaelMouraG)
+**Rafael Moura** — [@RafaelMouraG](https://github.com/RafaelMouraG)

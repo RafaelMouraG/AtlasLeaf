@@ -86,7 +86,7 @@ metadata = {
     'project': 'AtlasLeaf',
     'version': '3.1',
     'task': 'multi-class disease classification',
-    'model': 'efficientnet_b3',
+    'model': 'efficientnet_v2_s',
     'dataset': 'unified',
     'total_images': manifest['total_images'],
     'classes': classes,

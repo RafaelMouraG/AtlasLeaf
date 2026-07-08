@@ -31,3 +31,5 @@ SoyNet_Dataset/
 # --- NÃO ignorar metadados (pequenos, necessários) ---
 # atlasleaf_metadata.json - COMMITAR
 # atlasleaf_v2_metadata.json - COMMITAR
+.claude/
+.agents/

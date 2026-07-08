@@ -38,7 +38,7 @@ from tqdm import tqdm
 import numpy as np
 
 # Configurações do AtlasLeaf
-from data_pipeline.config_m3pro import M3ProConfig, print_system_info
+from data_pipeline.config_v31 import M3ProConfig, print_system_info
 from data_pipeline.model_v31 import create_model
 
 
@@ -197,16 +197,26 @@ def main():
     print("⚡ Usando augmentações agressivas para melhor generalização em campo")
     
     # Importa DomainRandomization para simular condições de campo
-    from data_pipeline.augmentation import DomainRandomization
+    try:
+        from data_pipeline.augmentation import DomainRandomization
+        HAS_DOMAIN_RANDOMIZATION = True
+    except ImportError:
+        HAS_DOMAIN_RANDOMIZATION = False
+        print("⚠️  DomainRandomization não disponível, usando augmentação padrão")
     
     # Augmentação PIL (antes de ToTensor)
     class FieldAugmentation:
         """Augmentação para simular fotos de campo."""
         def __init__(self):
-            self.domain_random = DomainRandomization(p=0.3)
+            if HAS_DOMAIN_RANDOMIZATION:
+                self.domain_random = DomainRandomization(p=0.3)
+            else:
+                self.domain_random = None
         
         def __call__(self, img):
-            return self.domain_random(img)
+            if self.domain_random is not None:
+                return self.domain_random(img)
+            return img
     
     train_transform = transforms.Compose([
         # Crop aleatório para diferentes escalas/enquadramentos

@@ -2,7 +2,7 @@
 import torch
 from pathlib import Path
 from data_pipeline.model_v31 import create_model
-from data_pipeline.config_m3pro import M3ProConfig
+from data_pipeline.config_v31 import M3ProConfig
 
 config = M3ProConfig()
 BACK_DIR = Path(__file__).parent

@@ -8,11 +8,11 @@ torchaudio==2.9.1
 
 # ONNX (Export e Inferência)
 onnx==1.20.0
-onnxruntime==1.23.2
+onnxruntime>=1.24.1
 onnxscript
 
 # Interface Web
-streamlit
+streamlit>=1.59  # <1.59 quebra no Python 3.14 (usa imghdr/protobuf antigo)
 pillow==12.1.0
 
 # Utilitários
@@ -23,3 +23,4 @@ tqdm  # Progress bars
 scikit-learn  # Métricas e splits
 seaborn  # Visualizações
 matplotlib  # Gráficos
+pandas>=3.0.1
