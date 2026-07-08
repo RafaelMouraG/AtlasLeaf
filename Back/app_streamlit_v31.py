@@ -66,11 +66,13 @@ def load_pytorch_model():
     """Carrega modelo PyTorch diretamente (para TTA)."""
     base_dir = Path(__file__).parent
     
-    # Prefere o checkpoint do modelo de campo (camera-split); fallback p/ o antigo
-    model_path = base_dir / "atlasleaf_v31_sourcesplit_best.pth"
-    if not model_path.exists():
-        model_path = base_dir / "atlasleaf_v31_best_model.pth"
-    if not model_path.exists():
+    # Prefere o modelo de campo bom (field7); fallbacks p/ os antigos
+    for name in ["atlasleaf_field7_best.pth", "atlasleaf_v31_sourcesplit_best.pth",
+                 "atlasleaf_v31_best_model.pth"]:
+        model_path = base_dir / name
+        if model_path.exists():
+            break
+    else:
         return None, None
     
     checkpoint = torch.load(model_path, map_location='cpu', weights_only=False)
