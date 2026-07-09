@@ -45,15 +45,22 @@ vez da lesão. Provado com um *probe* linear: dá para prever a **fonte** da fot
 
 ### Resultados (honestos)
 
-Avaliação por **split de câmera** (treina Canon, testa Motorola — proxy campo→campo):
+Avaliação por **split de câmera** (treina na câmera Canon, testa na Motorola — proxy campo→campo).
+Acurácia balanceada no teste em **câmera não vista**: **74,6%** · in-domain (mesma câmera) ~88% *(otimista, não representa deploy)*.
 
-| Métrica | Valor |
-|---|---|
-| Acurácia balanceada (câmera não vista) | **~75%** |
-| In-domain (mesma câmera) | ~88–98% *(otimista, não representa deploy)* |
+| Doença | Recall | Precisão | F1 | Imgs treino (Canon) | Imgs teste (Moto) |
+|---|---:|---:|---:|---:|---:|
+| Folha sadia | 91% | 52% | 0,66 | 1297 | 452 |
+| Míldio | 87% | 59% | 0,71 | 461 | 191 |
+| Deficiência de potássio | 86% | 88% | 0,87 | 619 | 413 |
+| Mancha alvo | 77% | 94% | 0,84 | 753 | 326 |
+| Ferrugem asiática | 70% | 84% | 0,77 | 1431 | 342 |
+| Mancha olho-de-rã | 68% | 85% | 0,76 | 970 | 570 |
+| Crestamento de cercospora | 42% | 96% | 0,58 | 1351 | 361 |
 
-Recall por classe (câmera não vista): potássio 86% · míldio 87% · sadia 91% · mancha alvo 77% ·
-ferrugem 70% · olho-de-rã 68% · **crestamento de cercospora 42%** (classe mais fraca).
+> **Recall** = das folhas que realmente têm a doença, quantas o modelo pega. **Precisão** = quando ele
+> aponta a doença, quantas vezes acerta. Métricas do conjunto de teste em câmera não vista (2.655 imagens
+> Motorola); numa lavoura diferente tendem a ser um pouco menores. Total de treino: 6.882 imagens (ASDID, câmera Canon).
 
 > ⚠️ Em uma lavoura **diferente** (outra região/telefone/cultivar) o número real tende a ficar **abaixo
 > de 75%** — Canon e Motorola dividem as mesmas parcelas. O teste que fecha a questão é rodar com fotos
