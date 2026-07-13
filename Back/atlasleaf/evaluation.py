@@ -14,8 +14,8 @@ Organize suas fotos em subpastas com o NOME da classe:
         ...
 
 Uso:
-    python test_field.py --dir minhas_fotos
-    python test_field.py --dir minhas_fotos --onnx atlasleaf_field7_diseases.onnx
+    python scripts/evaluate_field.py --dir minhas_fotos
+    python scripts/evaluate_field.py --dir minhas_fotos --onnx artifacts/field7/model.onnx
 """
 import argparse
 import json
@@ -26,8 +26,8 @@ import numpy as np
 from PIL import Image
 import onnxruntime as ort
 from sklearn.metrics import classification_report, confusion_matrix, balanced_accuracy_score
+from atlasleaf.paths import FIELD7_ARTIFACT_DIR, from_back
 
-BACK = Path(__file__).parent
 IMG_EXT = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
 
 
@@ -42,19 +42,21 @@ def preprocess(img: Image.Image, size, mean, std):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--dir", required=True, help="Pasta com subpastas por classe")
-    ap.add_argument("--onnx", default="atlasleaf_field7_diseases.onnx")
-    ap.add_argument("--meta", default="atlasleaf_field7_metadata.json")
+    ap.add_argument("--onnx", default=str(FIELD7_ARTIFACT_DIR / "model.onnx"))
+    ap.add_argument("--meta", default=str(FIELD7_ARTIFACT_DIR / "metadata.json"))
     args = ap.parse_args()
 
-    meta = json.load(open(BACK / args.meta))
+    meta = json.load(open(from_back(args.meta)))
     prep = meta["preprocessing"]
     size = prep["resize"]
     supported = meta["supported_class_ids"]
+    output_class_ids = meta.get("output_class_ids")
+    masked_output = meta.get("masked_output", output_class_ids is None)
     by_id = {int(c["id"]): c for c in meta["classes"]}
     name2id = {c["name"]: int(c["id"]) for c in meta["classes"]}
     threshold = float(meta.get("confidence_threshold", 0.6))
 
-    sess = ort.InferenceSession(str(BACK / args.onnx))
+    sess = ort.InferenceSession(str(from_back(args.onnx)))
     inp = sess.get_inputs()[0].name
 
     root = Path(args.dir)
@@ -76,12 +78,18 @@ def main():
                 print(f"  [falha] {f.name}: {e}")
                 continue
             logits = sess.run(None, {inp: x})[0][0]
-            # softmax só nas classes suportadas
-            sl = np.array([logits[i] for i in supported], dtype=np.float64)
-            sl = np.exp(sl - sl.max())
-            probs = sl / sl.sum()
-            k = int(np.argmax(probs))
-            pred_id = supported[k]
+            if output_class_ids and not masked_output:
+                sl = np.array(logits[:len(output_class_ids)], dtype=np.float64)
+                sl = np.exp(sl - sl.max())
+                probs = sl / sl.sum()
+                k = int(np.argmax(probs))
+                pred_id = int(output_class_ids[k])
+            else:
+                sl = np.array([logits[i] for i in supported], dtype=np.float64)
+                sl = np.exp(sl - sl.max())
+                probs = sl / sl.sum()
+                k = int(np.argmax(probs))
+                pred_id = supported[k]
             conf = float(probs[k])
             y_true.append(cid)
             y_pred.append(pred_id)

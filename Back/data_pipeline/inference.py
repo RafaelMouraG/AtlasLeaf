@@ -400,7 +400,7 @@ def load_model_for_inference(
     Returns:
         (modelo, device)
     """
-    from .model_v31 import create_model
+    from .model import create_model
     
     if device is None:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -429,7 +429,7 @@ if __name__ == "__main__":
     print("Testando pipeline de inferência...")
     
     # Cria modelo dummy para teste
-    from .model_v31 import create_model
+    from .model import create_model
     
     model = create_model("efficientnet_v2_s", num_classes=15)
     device = torch.device("cpu")

@@ -16,7 +16,14 @@ forçado a aprender a lesão de verdade, não a câmera. O maior salto é de 1�
 
 ---
 
-## 2. Quais doenças (confirmar prioridade com o agrônomo)
+## 2. Quais doenças — escopo por órgão fotografado
+
+**Princípio: o modelo só enxerga o que está na foto. O órgão que você fotografa já é o filtro.**
+Quem fotografa uma folha está dizendo "o sintoma que vejo está na folha". Por isso o escopo é
+organizado por **órgão**, não por "todas as doenças da soja". Doença cujo sinal está na raiz/haste
+não se identifica por foto de folha — não importa quão comum seja no talhão.
+
+### 2a. Folha — escopo principal
 
 **Prioridade máxima — as que o ASDID já tem (a sobreposição é o ouro):**
 
@@ -32,12 +39,54 @@ forçado a aprender a lesão de verdade, não a câmera. O maior salto é de 1�
 
 > `cercospora_blight` foi o ponto fraco do modelo atual (54% de recall). **Priorize volume aqui.**
 
-**Doenças novas do oeste baiano (o agrônomo decide quais entram):** ex. antracnose, mofo branco
-(Sclerotinia), oídio, mancha parda/septoriose, DFC. Para cada nova, crie uma pasta com nome em
-inglês_snake_case (ex.: `anthracnose`, `white_mold`) — o script de integração cria o id automaticamente.
+**Fracas que já existem no dataset e são comuns aqui — reforçar na coleta (fonte nova = ouro):**
 
-> Doença nova só existe na sua fonte → ajuda a **sua** região, mas ainda não generaliza pra fora dela.
-> Ela vira robusta quando houver uma 2ª fonte no futuro. Já as 7 de cima generalizam desde a 1ª foto baiana.
+| Pasta | Doença | Imagens hoje |
+|---|---|---|
+| `septoria_brown_spot` | Mancha parda (*Septoria glycines*) | 48 |
+| `powdery_mildew` | Oídio (*Erysiphe diffusa*) | 120 |
+| `sudden_death_syndrome` | SDS / fusariose foliar (*Fusarium virguliforme*) | 110 |
+
+> SDS é doença de raiz, mas o sintoma **foliar** (clorose internerval) é característico → classe
+> foliar válida. As três estão com volume baixo; reforço da Bahia move a agulha.
+
+**Novas foliares a abrir (dão lesão na folha, não existem no dataset):**
+
+| Pasta | Doença |
+|---|---|
+| `anthracnose` | Antracnose (*Colletotrichum truncatum*) |
+| `ascochyta_spot` | Mancha de Ascochyta (*Ascochyta sojae*) |
+
+### 2b. Haste/vagem — trilha nova
+
+| Pasta | Doença |
+|---|---|
+| `white_mold` | Mofo-branco (*Sclerotinia sclerotiorum*) |
+
+Mofo-branco **não aparece na folha** — vive na **haste/vagem**. Entra mesmo assim porque é **comum**
+e **visualmente inconfundível** (micélio branco cotonoso + escleródios pretos). É a primeira classe de
+uma trilha "fotografe a haste", com seletor de órgão no app (folha vs. haste).
+
+> ⚠️ **Rótulo = o sinal branco na haste/vagem, NUNCA a folha murcha acima da lesão.** A murcha é
+> sintoma secundário ambíguo (parece seca / deficiência). Treinar `white_mold` com folha murcha
+> reintroduz exatamente a confusão que queremos evitar. Fotografe o chumaço, não a murcha.
+
+### 2c. Fora de escopo (não fotografar pra classificar)
+
+Podridão de carvão (*Macrophomina phaseolina*), seca da haste e da vagem (*Diaporthe phaseolorum*),
+podridão de rizoctonia (*Rhizoctonia solani*). São de raiz/haste **e** na folha dão só murcha/amarelão
+genérico, sem assinatura distintiva — nem folha nem órgão têm sinal limpo o bastante. O modelo só
+chutaria.
+
+### 2d. Requisito do modelo: saber dizer "não sei"
+
+Para murcha / amarelão inespecífico (que pode ser doença de raiz fora de escopo, seca ou deficiência),
+o modelo precisa de **limiar de confiança + saída "sintoma inespecífico — verifique haste e raiz"** em
+vez de cravar um rótulo foliar. É o que protege contra a folha murcha ambígua.
+
+> Para cada doença nova, crie a pasta com nome em inglês_snake_case — o script de integração cria o id
+> automaticamente. Doença nova só existe na sua fonte → ajuda a **sua** região, mas só generaliza pra
+> fora quando houver uma 2ª fonte. As classes que o ASDID já tem generalizam desde a 1ª foto baiana.
 
 ---
 
@@ -62,6 +111,7 @@ fazenda/um telefone valem menos que 100 bem espalhadas — sem diversidade, vira
 - Capture **vários estágios de severidade** (início, médio, avançado) — não só o caso "livro-texto".
 - Inclua bastante `healthy` da **mesma lavoura** (o modelo precisa aprender o "normal" da sua região).
 - Evite: foto tremida/desfocada, várias folhas amontoadas, print de tela, zoom digital extremo, folha molhada com reflexo forte.
+- **Mofo-branco (`white_mold`):** mesma regra de foco/luz, mas o alvo é a **haste/vagem com o micélio branco e os escleródios pretos** ocupando o quadro — não a folha. (ver ⚠️ na seção 2b).
 
 ## 5. Eixos de diversidade (quanto mais, melhor)
 
@@ -134,5 +184,6 @@ Isso não entra no modelo, mas é o que te deixa auditar diversidade e rastrear 
 
 ## 10. Assim que tiver ~30–50 por doença
 
-Rode a integração + avaliação (ver `integrate_bahia.py`) e o `test_field.py`. Você já vê a tendência
+Rode a integração + avaliação (ver `scripts/integrate_dataset.py`) e o
+`scripts/evaluate_field.py`. Você já vê a tendência
 e decide onde reforçar a coleta. Não precisa juntar tudo antes de saber se está indo bem.

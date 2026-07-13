@@ -7,9 +7,8 @@ aplicando LeafCropper a cada imagem. Copia manifest.json e splits*.json
 (os caminhos relativos são idênticos, então continuam válidos).
 
 Uso:
-    python preprocess_leaf_crop.py                 # bbox crop (seguro)
-    python preprocess_leaf_crop.py --mask-bg       # + pinta fundo de cinza
-    python preprocess_leaf_crop.py --src datasets/unified --dst datasets/unified_cropped
+    python scripts/preprocess_dataset.py                 # bbox crop (seguro)
+    python scripts/preprocess_dataset.py --mask-bg       # + pinta fundo de cinza
 """
 import argparse
 import shutil
@@ -19,7 +18,7 @@ from pathlib import Path
 
 from PIL import Image
 
-sys.path.insert(0, str(Path(__file__).parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from data_pipeline.leaf_segmentation import LeafCropper
 
 IMG_EXT = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}

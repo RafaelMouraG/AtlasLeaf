@@ -64,7 +64,7 @@ Acurácia balanceada no teste em **câmera não vista**: **74,6%** · in-domain 
 
 > ⚠️ Em uma lavoura **diferente** (outra região/telefone/cultivar) o número real tende a ficar **abaixo
 > de 75%** — Canon e Motorola dividem as mesmas parcelas. O teste que fecha a questão é rodar com fotos
-> reais da sua lavoura (ver `test_field.py`).
+> reais da sua lavoura (ver `scripts/evaluate_field.py`).
 
 **Descartado por não ajudar:** recorte/segmentação de folha (o atalho de fonte vive nos pixels da folha,
 não no fundo) e fine-tune completo (distorce as features e generaliza **pior** que o backbone congelado).
@@ -104,7 +104,7 @@ pip install -r requirements.txt    # streamlit>=1.59 (versões antigas quebram n
 
 ```bash
 cd Back
-../.venv/bin/streamlit run app_streamlit_v31.py
+../.venv/bin/streamlit run streamlit_app.py
 ```
 Carrega automaticamente o modelo `field7`, mostra as 7 doenças e sinaliza baixa confiança.
 
@@ -113,7 +113,7 @@ Carrega automaticamente o modelo `field7`, mostra as 7 doenças e sinaliza baixa
 Organize `minhas_fotos/{nome_da_doenca}/*.jpg` e rode:
 ```bash
 cd Back
-../.venv/bin/python test_field.py --dir minhas_fotos
+../.venv/bin/python scripts/evaluate_field.py --dir minhas_fotos
 ```
 Reporta acurácia, acurácia balanceada, matriz de confusão e a acurácia **só nas predições confiantes**.
 
@@ -121,14 +121,20 @@ Reporta acurácia, acurácia balanceada, matriz de confusão e a acurácia **só
 
 ```bash
 cd Back
-../.venv/bin/python train_atlasleaf_v31.py --data-dir datasets/unified_resized \
+../.venv/bin/python scripts/train_field7.py --data-dir datasets/unified_resized \
     --source-split --split-file splits_camera.json \
-    --freeze-backbone --domain-aug --epochs 40 --ckpt-out atlasleaf_field7_best.pth
+    --field7 --freeze-backbone --domain-aug --epochs 40 \
+    --ckpt-out artifacts/field7/model.pth
 # exportar o ONNX + metadata a partir do checkpoint:
-../.venv/bin/python export_field7.py --ckpt atlasleaf_field7_best.pth
+../.venv/bin/python scripts/export_model.py --ckpt artifacts/field7/model.pth
 ```
 
 > 💡 Em testes, **sempre** use `--ckpt-out` com um nome próprio para não sobrescrever o modelo bom.
+
+> O artefato `field7` antigo possui 15 saídas mascaradas e métricas legadas não rastreáveis. Gere um novo
+> checkpoint com `--field7` para obter 7 saídas nativas, limiar calibrado na validação e métricas anexadas ao checkpoint.
+
+Veja [a arquitetura do projeto](Back/docs/architecture.md) para o contrato de datasets/modelos e os comandos canônicos.
 
 ---
 
@@ -138,17 +144,13 @@ cd Back
 AtlasLeaf/
 ├── README.md · requirements.txt · LICENSE
 └── Back/
-    ├── app_streamlit_v31.py          # Interface web (modelo field7)
-    ├── train_atlasleaf_v31.py        # Treino c/ split por fonte/câmera, freeze, domain-aug
-    ├── export_field7.py              # Exporta ONNX + metadata das 7 classes
-    ├── test_field.py                 # Avaliação com fotos reais do usuário
-    ├── integrate_bahia.py            # Junta dataset novo (Bahia) ao ASDID + split por fazenda
-    ├── preprocess_leaf_crop.py       # Pré-processa dataset (--no-crop reduz resolução p/ treino rápido)
-    │
+    ├── streamlit_app.py              # Interface web (ponto de entrada)
+    ├── atlasleaf/                    # treino, rótulos, modelo, inferência e artefatos
+    ├── scripts/                      # comandos de treino, export, avaliação e dados
     ├── data_pipeline/
-    │   ├── config_v31.py             # Configuração de treino
-    │   ├── model_v31.py              # EfficientNet-V2-S, Focal Loss, Mixup/CutMix
-    │   ├── inference_v31.py          # Pipeline de inferência (TTA, incerteza)
+    │   ├── config.py                 # Configuração de treino
+    │   ├── model.py                  # EfficientNet-V2-S, Focal Loss, Mixup/CutMix
+    │   ├── inference.py              # Pipeline de inferência (TTA, incerteza)
     │   ├── augmentation.py           # Augmentations de campo
     │   ├── domain_aug.py             # Augmentation de domínio (resolução/JPEG/cor)
     │   ├── leaf_segmentation.py      # Recorte de folha (disponível, mas descartado)
@@ -159,7 +161,8 @@ AtlasLeaf/
     │   ├── protocolo_coleta.md       # Como coletar o dataset do oeste baiano
     │   └── prompt_busca_datasets.md  # Prompt p/ Claude/Gemini acharem datasets complementares
     │
-    ├── atlasleaf_field7_*.{onnx,json,pth}   # Modelo atual + metadata
+    ├── artifacts/                    # ONNX, checkpoints e metadata
+    │   └── field7/                   # Modelo em produção
     └── datasets/ (não versionado)
         ├── unified/          # ASDID + Kaggle + SoyNet unificados
         ├── unified_resized/  # Imagens 768px (treino rápido, sem recorte)
@@ -195,9 +198,9 @@ AtlasLeaf/
 
 - [x] Modelo field7 (7 doenças) com avaliação honesta por câmera
 - [x] Interface web + limiar de confiança
-- [x] Ferramentas de avaliação com fotos reais (`test_field.py`)
+- [x] Ferramentas de avaliação com fotos reais (`scripts/evaluate_field.py`)
 - [x] Protocolo de coleta do oeste baiano (`docs/protocolo_coleta.md`)
-- [x] Integração de dataset novo + split por fazenda (`integrate_bahia.py`)
+- [x] Integração de dataset novo + split por fazenda (`scripts/integrate_dataset.py`)
 - [ ] **Coletar dataset do oeste baiano** (várias fazendas/telefones) para virar *in-domain* na região
 - [ ] Buscar datasets públicos complementares de campo (`docs/prompt_busca_datasets.md`)
 - [ ] Reforçar cercospora e reavaliar com split por região
@@ -209,6 +212,23 @@ AtlasLeaf/
 - **v2.0** — 10 doenças (Kaggle, dataset pequeno).
 - **v3.0/3.1** — unificação de datasets (ASDID + Kaggle + SoyNet) e a descoberta do viés de fonte.
 - **field7** *(atual)* — foco nas 7 classes de campo, avaliação honesta, ~75% cross-camera.
+
+---
+
+## 📚 Datasets e créditos
+
+Crédito, licença e uso de cada fonte em [docs/datasets.md](Back/docs/datasets.md).
+
+O modelo publicado **field7 é treinado exclusivamente com o ASDID** (o split por câmera só inclui
+imagens dessa fonte):
+
+- **ASDID** — Bevers, N., Sikora, E. J., & Hardy, N. B. (2022). *Auburn Soybean Disease Image Dataset*.
+  Dryad. https://doi.org/10.5061/dryad.41ns1rnj3 · CC0 1.0
+
+Outras fontes (**SoyNet**, um dataset **Kaggle**) existem no dataset unificado por herança das versões
+antigas, mas **não são usadas pelo modelo atual** — detalhes e citações no doc.
+
+> A **licença MIT abaixo cobre o código**, não as imagens. Cada dataset mantém a sua própria licença.
 
 ---
 

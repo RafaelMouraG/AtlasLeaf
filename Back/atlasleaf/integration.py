@@ -9,11 +9,11 @@ proxy honesto de "funciona numa lavoura que eu não amostrei".
 Não duplica o ASDID: usa symlinks. Doença nova (não existe no ASDID) ganha um id novo.
 
 Uso:
-    python integrate_bahia.py --bahia-dir bahia_raw
-    python integrate_bahia.py --bahia-dir bahia_raw --test-farm fazenda_riogrande
+    python scripts/integrate_dataset.py --bahia-dir bahia_raw
+    python scripts/integrate_dataset.py --bahia-dir bahia_raw --test-farm fazenda_riogrande
 
 Depois:
-    python train_atlasleaf_v31.py --data-dir datasets/combined --source-split \
+    python scripts/train_field7.py --data-dir datasets/combined --source-split \
         --split-file splits_region.json --freeze-backbone --domain-aug \
         --num-classes <N imprimido pelo script>
 """
@@ -185,7 +185,7 @@ def main():
         tag = "  <- SEM Bahia (não testável cross-região)" if not b else ""
         print(f"{nm:22s} | {asdid_by_cls.get(nm,0):5d} | {b}{tag}")
     print(f"\nSalvo: {out}/manifest.json e {out}/splits_region.json")
-    print("Treino: python train_atlasleaf_v31.py --data-dir datasets/combined "
+    print("Treino: python scripts/train_field7.py --data-dir datasets/combined "
           f"--source-split --split-file splits_region.json --freeze-backbone --domain-aug "
           f"--num-classes {next_id}")
 

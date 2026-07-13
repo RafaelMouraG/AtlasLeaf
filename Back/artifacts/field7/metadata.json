@@ -1,10 +1,21 @@
 {
   "project": "AtlasLeaf",
-  "version": "3.1",
-  "task": "multi-class disease classification",
-  "model": "efficientnet_b3",
-  "dataset": "unified",
-  "total_images": 10730,
+  "version": "field7-1.0",
+  "task": "soybean field disease classification (7 classes)",
+  "model": "efficientnet_v2_s",
+  "dataset": "asdid (7 classes de campo)",
+  "total_images": 9698,
+  "num_classes": 15,
+  "supported_class_ids": [
+    0,
+    1,
+    2,
+    3,
+    7,
+    12,
+    13
+  ],
+  "masked_output": true,
   "classes": [
     {
       "id": "0",
@@ -112,7 +123,7 @@
       "severity": "medium"
     }
   ],
-  "num_classes": 15,
+  "metrics": {},
   "preprocessing": {
     "resize": 384,
     "mean": [
@@ -124,7 +135,13 @@
       0.229,
       0.224,
       0.225
-    ]
+    ],
+    "leaf_crop": false
+  },
+  "confidence_threshold": 0.6,
+  "calibration": {
+    "status": "not_available",
+    "note": "O limiar deste artefato não foi calibrado com o protocolo atual. Retreine com --field7."
   },
   "input_shape": [
     1,
@@ -132,17 +149,14 @@
     384,
     384
   ],
-  "metrics": {
-    "val_accuracy": 98.50374064837905,
-    "val_loss": 3.1484497449185587
+  "evaluation": {
+    "protocol": "camera-holdout (treina Canon, testa Moto) — proxy campo→campo",
+    "note": "Métricas deste artefato não são exibidas porque os valores antigos divergiam do relatório. Retreine e exporte com o pipeline atual."
   },
   "training": {
-    "epochs_trained": 95,
-    "best_val_loss": 3.1484497449185587,
-    "best_val_acc": 98.50374064837905,
-    "focal_gamma": 3.0,
-    "mixup_alpha": 0.4,
-    "model_name": "efficientnet_b3",
-    "dropout": 0.5
+    "checkpoint": "artifacts/field7/model.pth",
+    "epoch": 33,
+    "val_balanced_acc": 88.21899308064103,
+    "recipe": "unified (sem recorte) + freeze-backbone + domain-aug + sampler sqrt"
   }
 }

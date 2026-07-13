@@ -1,6 +1,6 @@
 """
-AtlasLeaf v3.1 - Script de Treinamento Otimizado
-================================================
+AtlasLeaf - Treinamento do classificador de doenças
+===================================================
 
 Melhorias:
 1. EfficientNet-B3 (melhor que ResNet50)
@@ -17,6 +17,9 @@ import json
 import time
 import random
 import argparse
+import hashlib
+import math
+import subprocess
 from pathlib import Path
 from datetime import datetime
 from collections import Counter
@@ -34,9 +37,11 @@ from tqdm import tqdm
 from PIL import Image
 
 # Importa módulos locais
-sys.path.insert(0, str(Path(__file__).parent))
-from data_pipeline.model_v31 import create_model, CombinedLoss, mixup_data, cutmix_data, mixup_criterion
-from data_pipeline.config_v31 import TrainingConfigV31, OversamplingConfig
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from atlasleaf.labels import FIELD7_CLASS_IDS
+from atlasleaf.model import create_model, CombinedLoss, mixup_data, cutmix_data, mixup_criterion
+from atlasleaf.paths import ARTIFACTS_DIR, FIELD7_ARTIFACT_DIR
+from data_pipeline.config import TrainingConfig, OversamplingConfig
 
 
 # =============================================================================
@@ -50,6 +55,19 @@ def set_seed(seed: int = 42):
     torch.manual_seed(seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)
+
+
+def file_sha256(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def git_revision() -> str | None:
+    try:
+        return subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], text=True, stderr=subprocess.DEVNULL
+        ).strip()
+    except Exception:
+        return None
 
 
 def get_device():
@@ -151,7 +169,7 @@ def get_transforms(
 
     Se leaf_crop=True, aplica LeafCropper (isola a folha) ANTES do resize.
     Use isto quando treinar com imagens NÃO pré-recortadas. Se você já rodou
-    preprocess_leaf_crop.py e aponta para datasets/unified_cropped, deixe False.
+    scripts/preprocess_dataset.py e aponta para datasets/unified_cropped, deixe False.
 
     Se domain_aug=True (só treino), adiciona randomização de domínio (resolução +
     JPEG) e reforça o ColorJitter para apagar a assinatura de fonte nos pixels.
@@ -227,14 +245,21 @@ def train_epoch(
     optimizer: optim.Optimizer,
     scheduler,
     device: torch.device,
-    config: TrainingConfigV31,
+    config: TrainingConfig,
     epoch: int,
     use_mixup: bool = True,
     use_cutmix: bool = True,
+    freeze_backbone: bool = False,
 ) -> tuple:
     """Treina por uma época com gradient accumulation."""
     
     model.train()
+    # requires_grad=False não congela as running statistics de BatchNorm. Sem
+    # isto, a EfficientNet ainda se adapta ao domínio Canon durante o treino.
+    if freeze_backbone:
+        for name, module in model.named_children():
+            if name not in {"classifier", "fc"}:
+                module.eval()
     total_loss = 0
     correct = 0
     total = 0
@@ -297,6 +322,14 @@ def train_epoch(
             'loss': f'{loss.item():.4f}',
             'acc': f'{100.*correct/total:.2f}%'
         })
+
+    # Não descarte os gradientes dos últimos batches quando len(loader) não é
+    # múltiplo do accumulation_steps.
+    if len(loader) % config.accumulation_steps:
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+        optimizer.step()
+        scheduler.step()
+        optimizer.zero_grad()
     
     return total_loss / len(loader), 100. * correct / total
 
@@ -340,6 +373,62 @@ def validate(
     )
 
 
+def collect_probabilities(model: nn.Module, loader: DataLoader, device: torch.device):
+    """Coleta probabilidades sem alterar o estado do modelo."""
+    model.eval()
+    probs, labels = [], []
+    with torch.no_grad():
+        for images, batch_labels in loader:
+            logits = model(images.to(device))
+            probs.append(torch.softmax(logits, dim=1).cpu().numpy())
+            labels.append(batch_labels.numpy())
+    return np.concatenate(probs), np.concatenate(labels)
+
+
+def calibrate_threshold(probabilities, labels, target_precision: float = 0.90):
+    """Escolhe o menor limiar que atinge a precisão desejada na validação.
+
+    O teste holdout nunca participa desta escolha. O limiar é um compromisso de
+    cobertura/risco e deve ser reavaliado ao mudar de região.
+    """
+    confidences = probabilities.max(axis=1)
+    predictions = probabilities.argmax(axis=1)
+    candidates = np.unique(np.concatenate(([0.0], confidences, [1.0])))
+    selected = None
+    for threshold in candidates:
+        accepted = confidences >= threshold
+        if not accepted.any():
+            continue
+        precision = float((predictions[accepted] == labels[accepted]).mean())
+        if precision >= target_precision:
+            selected = (float(threshold), accepted, precision)
+            break
+    if selected is None:
+        return {"threshold": 1.0, "target_precision": target_precision,
+                "coverage": 0.0, "selective_accuracy": None,
+                "n_validation": int(len(labels)), "status": "target_not_reached"}
+    threshold, accepted, precision = selected
+    return {"threshold": threshold, "target_precision": target_precision,
+            "coverage": float(accepted.mean()), "selective_accuracy": precision,
+            "n_validation": int(len(labels)), "status": "calibrated"}
+
+
+def metrics_for_predictions(labels, predictions, class_names: dict):
+    present = sorted(set(labels) | set(predictions))
+    names = [class_names.get(c, str(c)) for c in present]
+    report = classification_report(labels, predictions, labels=present,
+                                   target_names=names, zero_division=0,
+                                   output_dict=True)
+    return {
+        "n": int(len(labels)),
+        "test_accuracy": float((np.asarray(labels) == np.asarray(predictions)).mean() * 100),
+        "test_balanced_acc": float(balanced_accuracy_score(labels, predictions) * 100),
+        "per_class": report,
+        "confusion_matrix": confusion_matrix(labels, predictions, labels=present).tolist(),
+        "labels": [int(label) for label in present],
+    }
+
+
 # =============================================================================
 # TREINAMENTO COM VALIDAÇÃO CRUZADA
 # =============================================================================
@@ -347,11 +436,12 @@ def validate(
 def train_with_cross_validation(
     image_paths: list,
     labels: list,
-    config: TrainingConfigV31,
+    config: TrainingConfig,
     device: torch.device,
     n_folds: int = 5,
 ):
     """Treina com validação cruzada estratificada."""
+    (ARTIFACTS_DIR / "runs").mkdir(parents=True, exist_ok=True)
     
     skf = StratifiedKFold(n_splits=n_folds, shuffle=True, random_state=42)
     fold_results = []
@@ -490,7 +580,7 @@ def train_with_cross_validation(
                     'optimizer_state_dict': optimizer.state_dict(),
                     'val_loss': val_loss,
                     'val_acc': val_acc,
-                }, f'atlasleaf_v31_fold{fold+1}_best.pth')
+                }, ARTIFACTS_DIR / 'runs' / f'fold{fold+1}_best.pth')
             else:
                 patience_counter += 1
             
@@ -550,7 +640,11 @@ def load_dataset(dataset_dir: Path):
     return all_images, all_labels
 
 
-def load_presplit_dataset(dataset_dir: Path, split_file: str = "splits_source.json"):
+def load_presplit_dataset(
+    dataset_dir: Path,
+    split_file: str = "splits_source.json",
+    label_mapping: dict[int, int] | None = None,
+):
     """
     Carrega um dataset já dividido (ex.: split por fonte, gerado por
     data_pipeline/source_split.py). Retorna dict split -> (paths, labels).
@@ -567,6 +661,9 @@ def load_presplit_dataset(dataset_dir: Path, split_file: str = "splits_source.js
         paths, labels = [], []
         for rel_path in splits.get(split, []):
             if rel_path in path_to_class:
+                original_label = path_to_class[rel_path]
+                if label_mapping is not None and original_label not in label_mapping:
+                    continue
                 # tolera troca de extensão feita pelo preprocess (.jpg)
                 fp = dataset_dir / rel_path
                 if not fp.exists():
@@ -574,21 +671,23 @@ def load_presplit_dataset(dataset_dir: Path, split_file: str = "splits_source.js
                     if alt.exists():
                         fp = alt
                 paths.append(str(fp))
-                labels.append(path_to_class[rel_path])
+                labels.append(label_mapping[original_label] if label_mapping else original_label)
         out[split] = (paths, labels)
     return out
 
 
 def train_holdout(
     data: dict,
-    config: TrainingConfigV31,
+    config: TrainingConfig,
     device: torch.device,
     leaf_crop: bool = False,
     leaf_crop_mask_bg: bool = False,
     domain_aug: bool = False,
     freeze_backbone: bool = False,
     class_names: dict = None,
-    ckpt_out: str = "atlasleaf_v31_sourcesplit_best.pth",
+    ckpt_out: str = str(FIELD7_ARTIFACT_DIR / "model.pth"),
+    run_metadata: dict | None = None,
+    target_precision: float = 0.90,
 ):
     """
     Treina respeitando o split por fonte: treina em `train`, valida em `val`,
@@ -596,6 +695,7 @@ def train_holdout(
     """
     train_paths, train_labels = data["train"]
     val_paths, val_labels = data["val"]
+    Path(ckpt_out).parent.mkdir(parents=True, exist_ok=True)
 
     class_counts = [0] * config.num_classes
     for l in train_labels:
@@ -652,7 +752,7 @@ def train_holdout(
                              gamma=config.focal_gamma_start, smoothing=config.label_smoothing)
     optimizer = optim.AdamW(params, lr=config.learning_rate,
                             weight_decay=config.weight_decay)
-    steps_per_epoch = max(1, len(train_loader) // config.accumulation_steps)
+    steps_per_epoch = max(1, math.ceil(len(train_loader) / config.accumulation_steps))
     scheduler = optim.lr_scheduler.OneCycleLR(
         optimizer, max_lr=config.learning_rate, total_steps=steps_per_epoch * config.epochs,
         pct_start=0.1, anneal_strategy='cos', div_factor=25.0, final_div_factor=10000.0)
@@ -663,7 +763,8 @@ def train_holdout(
     for epoch in range(config.epochs):
         criterion.gamma = config.get_focal_gamma(epoch, config.epochs)
         train_loss, train_acc = train_epoch(model, train_loader, criterion, optimizer,
-                                            scheduler, device, config, epoch)
+                                            scheduler, device, config, epoch,
+                                            freeze_backbone=freeze_backbone)
         val_loss, val_acc, val_preds, val_labs = validate(model, val_loader, criterion, device)
         val_bal = 100.0 * balanced_accuracy_score(val_labs, val_preds)
         print(f"Epoch {epoch+1}: Train Loss={train_loss:.4f} Acc={train_acc:.2f}% | "
@@ -672,7 +773,8 @@ def train_holdout(
             best_val_bal = val_bal
             patience = 0
             torch.save({'epoch': epoch, 'model_state_dict': model.state_dict(),
-                        'val_loss': val_loss, 'val_acc': val_acc, 'val_bal_acc': val_bal},
+                        'val_loss': val_loss, 'val_acc': val_acc, 'val_bal_acc': val_bal,
+                        'config': vars(config), 'run': run_metadata or {}},
                        ckpt_out)
         else:
             patience += 1
@@ -689,7 +791,16 @@ def train_holdout(
     except Exception as e:
         print(f"\n⚠️ Não recarregou checkpoint ({e}); avaliando modelo em memória.")
 
-    # Avaliação final honesta
+    # Calibração é feita EXCLUSIVAMENTE na validação, antes de tocar no holdout.
+    val_probs, val_labels_np = collect_probabilities(model, val_loader, device)
+    calibration = calibrate_threshold(val_probs, val_labels_np, target_precision)
+    print(f"\nLimiar calibrado na validação: {calibration['threshold']:.3f} "
+          f"(cobertura={calibration['coverage']:.1%}, "
+          f"precisão={calibration['selective_accuracy']})")
+
+    # Avaliação final honesta. O relatório vai para o checkpoint, permitindo
+    # que export e app exibam o mesmo número que foi efetivamente medido.
+    test_metrics = {}
     for split_name, tag in [("test", "HELD-OUT / HONESTO (fonte ou câmera não vista)"),
                             ("test_insource", "IN-SOURCE (otimista)")]:
         paths, labels = data.get(split_name, ([], []))
@@ -704,6 +815,29 @@ def train_holdout(
         names = [class_names.get(c, str(c)) if class_names else str(c) for c in present]
         print(classification_report(labs, preds, labels=present,
                                     target_names=names, zero_division=0))
+        test_metrics[split_name] = metrics_for_predictions(labs, preds, class_names or {})
+
+        # Métrica seletiva do limiar calibrado, apenas como diagnóstico do
+        # holdout; ela não retroalimenta a escolha do limiar.
+        probs, labels_np = collect_probabilities(model, loader, device)
+        accepted = probs.max(axis=1) >= calibration["threshold"]
+        if accepted.any():
+            test_metrics[split_name]["selective"] = {
+                "threshold": calibration["threshold"],
+                "coverage": float(accepted.mean()),
+                "accuracy": float((probs.argmax(axis=1)[accepted] == labels_np[accepted]).mean() * 100),
+            }
+        else:
+            test_metrics[split_name]["selective"] = {
+                "threshold": calibration["threshold"], "coverage": 0.0, "accuracy": None,
+            }
+
+    # Atualiza o melhor checkpoint sem sobrescrever os pesos selecionados. Para
+    # field7, output_class_ids conecta índices 0..6 aos IDs originais do manifest.
+    ckpt = torch.load(ckpt_out, map_location="cpu", weights_only=False)
+    ckpt["calibration"] = calibration
+    ckpt["test_metrics"] = test_metrics
+    torch.save(ckpt, ckpt_out)
     return model
 
 
@@ -718,6 +852,8 @@ def main():
     parser.add_argument('--lr', type=float, default=5e-4)
     parser.add_argument('--num-classes', type=int, default=15,
                        help='Nº de saídas do modelo (aumente se o dataset combinado tiver doenças novas)')
+    parser.add_argument('--field7', action='store_true',
+                       help='Treina o produto de campo com 7 saídas nativas (recomendado).')
     parser.add_argument('--folds', type=int, default=5,
                        help='Número de folds para validação cruzada (0 = sem CV)')
     parser.add_argument('--no-cv', action='store_true',
@@ -731,10 +867,12 @@ def main():
                        help='LeafCropper pinta o fundo de cinza (mais agressivo)')
     parser.add_argument('--domain-aug', action='store_true',
                        help='Augmentation de domínio (resolução+JPEG+cor) p/ apagar assinatura de fonte')
-    parser.add_argument('--ckpt-out', type=str, default='atlasleaf_v31_sourcesplit_best.pth',
+    parser.add_argument('--ckpt-out', type=str, default=str(FIELD7_ARTIFACT_DIR / 'model.pth'),
                        help='Arquivo do melhor checkpoint (use um nome diferente em testes!)')
     parser.add_argument('--freeze-backbone', action='store_true',
                        help='Congela o backbone e treina só a cabeça (melhor generalização cross-source)')
+    parser.add_argument('--target-precision', type=float, default=0.90,
+                       help='Precisão-alvo para calibrar o limiar somente na validação (0-1).')
 
     args = parser.parse_args()
     
@@ -745,7 +883,12 @@ def main():
     print(f"🔢 PyTorch: {torch.__version__}")
     
     # Config
-    config = TrainingConfigV31(
+    if not 0 < args.target_precision <= 1:
+        parser.error('--target-precision deve estar entre 0 e 1')
+    if args.field7:
+        args.num_classes = len(FIELD7_CLASS_IDS)
+
+    config = TrainingConfig(
         model_name=args.model,
         epochs=args.epochs,
         batch_size=args.batch_size,
@@ -765,14 +908,28 @@ def main():
     if args.source_split:
         print(f"\n🧪 Modo split-por-fonte ({args.split_file}) — avaliação honesta")
         manifest = json.load(open(dataset_dir / "manifest.json"))
-        class_names = {v["id"]: k for k, v in manifest["class_distribution"].items()}
-        data = load_presplit_dataset(dataset_dir, args.split_file)
+        original_names = {int(v["id"]): k for k, v in manifest["class_distribution"].items()}
+        label_mapping = {cid: i for i, cid in enumerate(FIELD7_CLASS_IDS)} if args.field7 else None
+        class_names = ({i: original_names.get(cid, str(cid)) for i, cid in enumerate(FIELD7_CLASS_IDS)}
+                       if args.field7 else original_names)
+        data = load_presplit_dataset(dataset_dir, args.split_file, label_mapping=label_mapping)
+        split_path = dataset_dir / args.split_file
+        run_metadata = {
+            "seed": 42,
+            "git_revision": git_revision(),
+            "split_file": args.split_file,
+            "split_sha256": file_sha256(split_path),
+            "field7": args.field7,
+            "output_class_ids": FIELD7_CLASS_IDS if args.field7 else list(range(config.num_classes)),
+            "command": " ".join(sys.argv),
+        }
         for k, (p, _) in data.items():
             print(f"   {k}: {len(p)} imagens")
         train_holdout(data, config, device,
                       leaf_crop=args.leaf_crop, leaf_crop_mask_bg=args.leaf_crop_mask_bg,
                       domain_aug=args.domain_aug, freeze_backbone=args.freeze_backbone,
-                      class_names=class_names, ckpt_out=args.ckpt_out)
+                      class_names=class_names, ckpt_out=args.ckpt_out,
+                      run_metadata=run_metadata, target_precision=args.target_precision)
         return
 
     # Carrega dados

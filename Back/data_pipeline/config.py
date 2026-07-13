@@ -45,7 +45,7 @@ class OversamplingConfig:
 
 
 @dataclass
-class TrainingConfigV31:
+class TrainingConfig:
     """Configuração completa para treinamento AtlasLeaf v3.1."""
     
     # Modelo
@@ -122,7 +122,7 @@ class TrainingConfigV31:
 
 
 @dataclass 
-class M3ProConfig(TrainingConfigV31):
+class M3ProConfig(TrainingConfig):
     """Configuração otimizada para MacBook Pro M3 Pro (18GB RAM unificada)."""
     
     # Otimizações para Apple Silicon

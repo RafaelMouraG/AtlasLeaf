@@ -1,5 +1,5 @@
 """
-🌿 AtlasLeaf v3.1 - Interface com TTA e Detecção de Incerteza
+🌿 AtlasLeaf - Interface de diagnóstico
 
 Melhorias:
 - Test-Time Augmentation (TTA) para maior precisão
@@ -12,22 +12,22 @@ import onnxruntime as ort
 import numpy as np
 from PIL import Image
 import json
-from pathlib import Path
+from atlasleaf.paths import BACK_DIR, FIELD7_ARTIFACT_DIR
 
-# Importa pipeline de inferência v3.1
+# Importa pipeline de inferência
 try:
-    from data_pipeline.inference_v31 import AtlasLeafInference, UncertaintyDetector
-    from data_pipeline.model_v31 import create_model
+    from atlasleaf.inference import AtlasLeafInference, UncertaintyDetector
+    from atlasleaf.model import create_model
     import torch
-    V31_AVAILABLE = True
+    PIPELINE_AVAILABLE = True
 except ImportError as e:
-    V31_AVAILABLE = False
-    print(f"⚠️  Pipeline v3.1 não disponível: {e}")
+    PIPELINE_AVAILABLE = False
+    print(f"⚠️  Pipeline de inferência não disponível: {e}")
 
 
 # ==================== CONFIGURAÇÃO DA PÁGINA ====================
 st.set_page_config(
-    page_title="AtlasLeaf v3.1 - Diagnóstico Avançado",
+    page_title="AtlasLeaf - Diagnóstico de doenças da soja",
     page_icon="🌿",
     layout="centered"
 )
@@ -45,42 +45,32 @@ SEVERITY_INFO = {
 @st.cache_resource
 def load_model():
     """Carrega modelo ONNX e metadados."""
-    base_dir = Path(__file__).parent
+    base_dir = BACK_DIR
     
-    # Prefere o modelo de campo (7 classes), depois v3.1, depois v3.0
-    for version in ["field7", "v31", "v3"]:
-        onnx_path = base_dir / f"atlasleaf_{version}_diseases.onnx"
-        meta_path = base_dir / f"atlasleaf_{version}_metadata.json"
-        
-        if onnx_path.exists() and meta_path.exists():
-            with open(meta_path, 'r', encoding='utf-8') as f:
-                metadata = json.load(f)
-            
-            session = ort.InferenceSession(str(onnx_path))
-            return session, metadata, version
-    
-    raise FileNotFoundError("Modelo não encontrado. Execute o treinamento primeiro.")
+    onnx_path = FIELD7_ARTIFACT_DIR / "model.onnx"
+    meta_path = FIELD7_ARTIFACT_DIR / "metadata.json"
+    if not onnx_path.exists() or not meta_path.exists():
+        raise FileNotFoundError("Modelo field7 não encontrado. Execute o treinamento e a exportação primeiro.")
+    with open(meta_path, 'r', encoding='utf-8') as f:
+        metadata = json.load(f)
+    return ort.InferenceSession(str(onnx_path)), metadata, "field7"
 
 
 def load_pytorch_model():
     """Carrega modelo PyTorch diretamente (para TTA)."""
-    base_dir = Path(__file__).parent
+    base_dir = BACK_DIR
     
-    # Prefere o modelo de campo bom (field7); fallbacks p/ os antigos
-    for name in ["atlasleaf_field7_best.pth", "atlasleaf_v31_sourcesplit_best.pth",
-                 "atlasleaf_v31_best_model.pth"]:
-        model_path = base_dir / name
-        if model_path.exists():
-            break
-    else:
+    model_path = FIELD7_ARTIFACT_DIR / "model.pth"
+    if not model_path.exists():
         return None, None
     
     checkpoint = torch.load(model_path, map_location='cpu', weights_only=False)
     
-    from data_pipeline.model_v31 import create_model
+    from atlasleaf.model import create_model
     model = create_model(
         model_name=checkpoint.get('config', {}).get('model_name', 'efficientnet_v2_s'),
         num_classes=checkpoint.get('config', {}).get('num_classes', 15),
+        pretrained=False,
     )
     model.load_state_dict(checkpoint['model_state_dict'])
     model.eval()
@@ -129,8 +119,18 @@ def format_results(probs, metadata: dict) -> dict:
     if not supported:
         supported = [int(c['id']) for c in classes]  # retrocompatível: usa todas
 
-    # Renormaliza as probabilidades entre as classes suportadas
-    sup_probs = {cid: float(probs[cid]) for cid in supported if cid < len(probs)}
+    # field7.1 possui sete saídas nativas. A lista faz a ponte entre a posição
+    # do logit e o ID histórico do manifest, sem mascarar probabilidades.
+    output_class_ids = metadata.get('output_class_ids')
+    if output_class_ids and not metadata.get('masked_output', False):
+        sup_probs = {int(cid): float(probs[pos]) for pos, cid in enumerate(output_class_ids)
+                     if int(cid) in supported and pos < len(probs)}
+        supported_mass = sum(sup_probs.values())
+    else:
+        # Compatibilidade temporária com o checkpoint legado de 15 saídas.
+        # A massa removida é sinal de imagem fora do escopo; não a escondemos.
+        sup_probs = {cid: float(probs[cid]) for cid in supported if cid < len(probs)}
+        supported_mass = sum(sup_probs.values())
     total = sum(sup_probs.values()) or 1.0
 
     results = []
@@ -148,20 +148,24 @@ def format_results(probs, metadata: dict) -> dict:
 
     threshold = float(metadata.get('confidence_threshold', 0.7))
     top1 = results[0]['probability'] / 100 if results else 0.0
-    is_uncertain = top1 < threshold
-    if is_uncertain:
+    out_of_scope = bool(metadata.get('masked_output', False) and supported_mass < 0.8)
+    is_uncertain = top1 < threshold or out_of_scope
+    if out_of_scope:
+        rec = "⚠️ POSSÍVEL CASO FORA DO ESCOPO — o modelo não reconheceu bem as 7 classes de campo"
+    elif is_uncertain:
         rec = f"⚠️ BAIXA CONFIANÇA (<{threshold*100:.0f}%) — verifique visualmente ou capture nova foto"
     else:
         rec = "✅ Predição confiável"
     return {'results': results, 'is_uncertain': is_uncertain,
-            'recommendation': rec, 'confidence': top1}
+            'recommendation': rec, 'confidence': top1,
+            'supported_mass': supported_mass}
 
 
 # ==================== INFERÊNCIA COM TTA ====================
 def predict_with_tta(image: Image.Image, metadata: dict) -> dict:
     """Faz predição usando TTA se disponível."""
     
-    if not V31_AVAILABLE:
+    if not PIPELINE_AVAILABLE:
         # Fallback para predição simples
         return predict_simple(image, metadata)
     
@@ -250,9 +254,9 @@ def render_result_card(result: dict, is_top: bool = False, is_uncertain: bool = 
 
 
 def main():
-    st.title("🌿 AtlasLeaf v3.1")
+    st.title("🌿 AtlasLeaf")
     st.markdown("### Diagnóstico Avançado de Doenças da Soja")
-    st.markdown("*Com Test-Time Augmentation (TTA) e detecção de incerteza*")
+    st.markdown("*Diagnóstico assistido com incerteza e Test-Time Augmentation (TTA)*")
     st.markdown("---")
     
     # Carregar modelo
@@ -263,7 +267,7 @@ def main():
         with col1:
             st.success(f"✅ Modelo carregado: {metadata['model']} (v{version})")
         with col2:
-            tta_status = "🟢 TTA Ativo" if V31_AVAILABLE else "🟡 TTA Indisponível"
+            tta_status = "🟢 TTA Ativo" if PIPELINE_AVAILABLE else "🟡 TTA Indisponível"
             st.info(tta_status)
         
         with st.expander("ℹ️ Informações do Modelo"):
@@ -275,15 +279,19 @@ def main():
                 n_sup = len(metadata.get('supported_class_ids') or metadata.get('classes', []))
                 st.write(f"**Classes:** {n_sup}")
                 metrics = metadata.get('metrics', {})
-                acc = metrics.get('test_accuracy')
-                if acc is None:
+                bal = metrics.get('test_balanced_acc')
+                if bal is None:
                     bal = metadata.get('evaluation', {}).get('test_balanced_acc')
-                    acc = bal * 100 if bal is not None else None
-                st.write(f"**Acurácia:** {acc:.1f}%" if acc is not None else "**Acurácia:** N/A")
+                    bal = bal * 100 if bal is not None and bal <= 1 else bal
+                st.write(f"**Acurácia balanceada:** {bal:.1f}%" if bal is not None
+                         else "**Acurácia balanceada:** N/A")
             with col3:
                 st.write(f"**Dataset:** {metadata.get('dataset', 'N/A')}")
                 total = metadata.get('total_images')
                 st.write(f"**Imagens:** {total:,}" if isinstance(total, (int, float)) else "**Imagens:** N/A")
+                calibration = metadata.get('calibration', {})
+                if calibration.get('status') == 'calibrated':
+                    st.write(f"**Limiar calibrado:** {calibration['threshold']:.2f}")
     
     except FileNotFoundError as e:
         st.error(f"❌ {e}")
@@ -296,7 +304,7 @@ def main():
     
     # Configurações TTA
     with st.expander("⚙️ Configurações Avançadas"):
-        use_tta = st.checkbox("Usar Test-Time Augmentation (TTA)", value=True, disabled=not V31_AVAILABLE)
+        use_tta = st.checkbox("Usar Test-Time Augmentation (TTA)", value=True, disabled=not PIPELINE_AVAILABLE)
         show_details = st.checkbox("Mostrar detalhes técnicos", value=False)
     
     # Upload de imagem
@@ -331,7 +339,7 @@ def main():
             
             with st.spinner("Analisando com TTA..." if use_tta else "Analisando..."):
                 try:
-                    if use_tta and V31_AVAILABLE:
+                    if use_tta and PIPELINE_AVAILABLE:
                         result = predict_with_tta(image, metadata)
                     else:
                         result = predict_simple(image, metadata)
