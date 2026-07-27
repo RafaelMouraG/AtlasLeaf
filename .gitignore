@@ -17,6 +17,7 @@ __pycache__/
 # --- Ignorar Datasets e Arquivos Pesados ---
 Soybean_Diseases_Dataset/
 SoyNet_Dataset/
+temp_dataset
 *.zip
 *.rar
 
