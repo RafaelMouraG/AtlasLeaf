@@ -12,8 +12,15 @@ onnxruntime>=1.24.1
 onnxscript
 
 # Interface Web
-streamlit
+streamlit>=1.59  # <1.59 quebra no Python 3.14 (usa imghdr/protobuf antigo)
 pillow==12.1.0
 
 # Utilitários
 numpy==2.4.0
+tqdm  # Progress bars
+
+# Machine Learning (v3.0)
+scikit-learn  # Métricas e splits
+seaborn  # Visualizações
+matplotlib  # Gráficos
+pandas>=3.0.1
