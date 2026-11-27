@@ -238,6 +238,15 @@ def get_transforms(
 # FUNÇÕES DE TREINAMENTO
 # =============================================================================
 
+def resolve_num_workers(device: torch.device, requested: int | None) -> int:
+    """Escolhe num_workers seguro: paralelo em CUDA/Linux, 0 em MPS/CPU por padrão."""
+    if requested is not None:
+        return max(0, int(requested))
+    if device.type == "cuda" and os.name == "posix":
+        return min(4, max(2, (os.cpu_count() or 2) // 2))
+    return 0
+
+
 def train_epoch(
     model: nn.Module,
     loader: DataLoader,
@@ -250,8 +259,9 @@ def train_epoch(
     use_mixup: bool = True,
     use_cutmix: bool = True,
     freeze_backbone: bool = False,
+    use_amp: bool = False,
 ) -> tuple:
-    """Treina por uma época com gradient accumulation."""
+    """Treina por uma época com gradient accumulation e suporte opcional a AMP (CUDA)."""
     
     model.train()
     # requires_grad=False não congela as running statistics de BatchNorm. Sem
@@ -263,14 +273,20 @@ def train_epoch(
     total_loss = 0
     correct = 0
     total = 0
+
+    amp_enabled = use_amp and device.type == "cuda"
+    amp_dtype = torch.bfloat16 if (amp_enabled and torch.cuda.is_bf16_supported()) else torch.float16
+    use_scaler = amp_enabled and amp_dtype == torch.float16
+    scaler = torch.amp.GradScaler("cuda", enabled=use_scaler)
+    non_blocking = device.type == "cuda"
     
-    optimizer.zero_grad()
+    optimizer.zero_grad(set_to_none=True)
     
     pbar = tqdm(loader, desc=f"Epoch {epoch+1}")
     
     for batch_idx, (images, labels) in enumerate(pbar):
-        images = images.to(device)
-        labels = labels.to(device)
+        images = images.to(device, non_blocking=non_blocking)
+        labels = labels.to(device, non_blocking=non_blocking)
         
         # Mixup ou CutMix
         mixed_images = images
@@ -286,14 +302,13 @@ def train_epoch(
             mixed_images, labels_a, labels_b, lam = cutmix_data(images, labels, config.cutmix_alpha)
             use_aug = True
         
-        # Forward
-        outputs = model(mixed_images)
-        
-        # Loss
-        if use_aug and labels_b is not None:
-            loss = mixup_criterion(criterion, outputs, labels_a, labels_b, lam)
-        else:
-            loss = criterion(outputs, labels)
+        # Forward + Loss (com autocast quando --amp em CUDA)
+        with torch.amp.autocast(device_type="cuda", dtype=amp_dtype, enabled=amp_enabled):
+            outputs = model(mixed_images)
+            if use_aug and labels_b is not None:
+                loss = mixup_criterion(criterion, outputs, labels_a, labels_b, lam)
+            else:
+                loss = criterion(outputs, labels)
         
         # CORREÇÃO: Acumula loss ANTES de normalizar para relatório
         loss_value = loss.item()
@@ -301,14 +316,23 @@ def train_epoch(
         
         # Normaliza loss pelo número de accumulation steps para backward
         loss = loss / config.accumulation_steps
-        loss.backward()
+        if use_scaler:
+            scaler.scale(loss).backward()
+        else:
+            loss.backward()
         
         # Accumulation
         if (batch_idx + 1) % config.accumulation_steps == 0:
+            if use_scaler:
+                scaler.unscale_(optimizer)
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
-            optimizer.step()
+            if use_scaler:
+                scaler.step(optimizer)
+                scaler.update()
+            else:
+                optimizer.step()
             scheduler.step()  # CORREÇÃO: OneCycleLR precisa ser chamado a cada batch
-            optimizer.zero_grad()
+            optimizer.zero_grad(set_to_none=True)
         _, predicted = outputs.max(1)
         total += labels.size(0)
         
@@ -326,10 +350,16 @@ def train_epoch(
     # Não descarte os gradientes dos últimos batches quando len(loader) não é
     # múltiplo do accumulation_steps.
     if len(loader) % config.accumulation_steps:
+        if use_scaler:
+            scaler.unscale_(optimizer)
         torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
-        optimizer.step()
+        if use_scaler:
+            scaler.step(optimizer)
+            scaler.update()
+        else:
+            optimizer.step()
         scheduler.step()
-        optimizer.zero_grad()
+        optimizer.zero_grad(set_to_none=True)
     
     return total_loss / len(loader), 100. * correct / total
 
@@ -339,6 +369,7 @@ def validate(
     loader: DataLoader,
     criterion: nn.Module,
     device: torch.device,
+    use_amp: bool = False,
 ) -> tuple:
     """Valida o modelo."""
     
@@ -348,14 +379,18 @@ def validate(
     total = 0
     all_preds = []
     all_labels = []
+    amp_enabled = use_amp and device.type == "cuda"
+    amp_dtype = torch.bfloat16 if (amp_enabled and torch.cuda.is_bf16_supported()) else torch.float16
+    non_blocking = device.type == "cuda"
     
     with torch.no_grad():
         for images, labels in tqdm(loader, desc="Validating", leave=False):
-            images = images.to(device)
-            labels = labels.to(device)
+            images = images.to(device, non_blocking=non_blocking)
+            labels = labels.to(device, non_blocking=non_blocking)
             
-            outputs = model(images)
-            loss = criterion(outputs, labels)
+            with torch.amp.autocast(device_type="cuda", dtype=amp_dtype, enabled=amp_enabled):
+                outputs = model(images)
+                loss = criterion(outputs, labels)
             
             total_loss += loss.item()
             _, predicted = outputs.max(1)
@@ -373,14 +408,18 @@ def validate(
     )
 
 
-def collect_probabilities(model: nn.Module, loader: DataLoader, device: torch.device):
+def collect_probabilities(model: nn.Module, loader: DataLoader, device: torch.device, use_amp: bool = False):
     """Coleta probabilidades sem alterar o estado do modelo."""
     model.eval()
     probs, labels = [], []
+    amp_enabled = use_amp and device.type == "cuda"
+    amp_dtype = torch.bfloat16 if (amp_enabled and torch.cuda.is_bf16_supported()) else torch.float16
+    non_blocking = device.type == "cuda"
     with torch.no_grad():
         for images, batch_labels in loader:
-            logits = model(images.to(device))
-            probs.append(torch.softmax(logits, dim=1).cpu().numpy())
+            with torch.amp.autocast(device_type="cuda", dtype=amp_dtype, enabled=amp_enabled):
+                logits = model(images.to(device, non_blocking=non_blocking))
+            probs.append(torch.softmax(logits.float(), dim=1).cpu().numpy())
             labels.append(batch_labels.numpy())
     return np.concatenate(probs), np.concatenate(labels)
 
@@ -688,6 +727,8 @@ def train_holdout(
     ckpt_out: str = str(FIELD7_ARTIFACT_DIR / "model.pth"),
     run_metadata: dict | None = None,
     target_precision: float = 0.90,
+    num_workers: int = 0,
+    use_amp: bool = False,
 ):
     """
     Treina respeitando o split por fonte: treina em `train`, valida em `val`,
@@ -723,10 +764,16 @@ def train_holdout(
     train_sampler = WeightedRandomSampler(
         weights=sample_weights, num_samples=len(train_labels), replacement=True,
     )
+    pin_memory = device.type == "cuda"
+    loader_kwargs = {
+        "num_workers": num_workers,
+        "pin_memory": pin_memory,
+        "persistent_workers": num_workers > 0,
+    }
     train_loader = DataLoader(train_dataset, batch_size=config.batch_size,
-                              sampler=train_sampler, num_workers=0, pin_memory=False)
+                              sampler=train_sampler, **loader_kwargs)
     val_loader = DataLoader(val_dataset, batch_size=config.batch_size, shuffle=False,
-                            num_workers=0, pin_memory=False)
+                            **loader_kwargs)
 
     model = create_model(config.model_name, config.num_classes, pretrained=True,
                          dropout=config.dropout).to(device)
@@ -764,8 +811,10 @@ def train_holdout(
         criterion.gamma = config.get_focal_gamma(epoch, config.epochs)
         train_loss, train_acc = train_epoch(model, train_loader, criterion, optimizer,
                                             scheduler, device, config, epoch,
-                                            freeze_backbone=freeze_backbone)
-        val_loss, val_acc, val_preds, val_labs = validate(model, val_loader, criterion, device)
+                                            freeze_backbone=freeze_backbone,
+                                            use_amp=use_amp)
+        val_loss, val_acc, val_preds, val_labs = validate(model, val_loader, criterion, device,
+                                                          use_amp=use_amp)
         val_bal = 100.0 * balanced_accuracy_score(val_labs, val_preds)
         print(f"Epoch {epoch+1}: Train Loss={train_loss:.4f} Acc={train_acc:.2f}% | "
               f"Val Loss={val_loss:.4f} Acc={val_acc:.2f}% BalAcc={val_bal:.2f}%")
@@ -792,7 +841,7 @@ def train_holdout(
         print(f"\n⚠️ Não recarregou checkpoint ({e}); avaliando modelo em memória.")
 
     # Calibração é feita EXCLUSIVAMENTE na validação, antes de tocar no holdout.
-    val_probs, val_labels_np = collect_probabilities(model, val_loader, device)
+    val_probs, val_labels_np = collect_probabilities(model, val_loader, device, use_amp=use_amp)
     calibration = calibrate_threshold(val_probs, val_labels_np, target_precision)
     print(f"\nLimiar calibrado na validação: {calibration['threshold']:.3f} "
           f"(cobertura={calibration['coverage']:.1%}, "
@@ -807,8 +856,9 @@ def train_holdout(
         if not paths:
             continue
         ds = SimpleSoybeanDataset(paths, labels, transform=eval_tf)
-        loader = DataLoader(ds, batch_size=config.batch_size, shuffle=False, num_workers=0)
-        _, acc, preds, labs = validate(model, loader, criterion, device)
+        loader = DataLoader(ds, batch_size=config.batch_size, shuffle=False,
+                            num_workers=num_workers, pin_memory=pin_memory)
+        _, acc, preds, labs = validate(model, loader, criterion, device, use_amp=use_amp)
         bal = 100.0 * balanced_accuracy_score(labs, preds)
         print(f"\n=== Teste {tag}: acc={acc:.2f}%  BalAcc={bal:.2f}%  (n={len(labels)}) ===")
         present = sorted(set(labs))
@@ -819,7 +869,7 @@ def train_holdout(
 
         # Métrica seletiva do limiar calibrado, apenas como diagnóstico do
         # holdout; ela não retroalimenta a escolha do limiar.
-        probs, labels_np = collect_probabilities(model, loader, device)
+        probs, labels_np = collect_probabilities(model, loader, device, use_amp=use_amp)
         accepted = probs.max(axis=1) >= calibration["threshold"]
         if accepted.any():
             test_metrics[split_name]["selective"] = {
@@ -849,7 +899,13 @@ def main():
                        choices=['efficientnet_v2_s', 'efficientnet_b3', 'convnext_tiny', 'mobilenet_v3', 'resnet50'])
     parser.add_argument('--epochs', type=int, default=100)
     parser.add_argument('--batch-size', type=int, default=12)
+    parser.add_argument('--accumulation-steps', type=int, default=None,
+                       help='Passos de gradient accumulation (padrão: 4; use 1-2 com batch grande em GPU)')
     parser.add_argument('--lr', type=float, default=5e-4)
+    parser.add_argument('--num-workers', type=int, default=None,
+                       help='Workers do DataLoader (padrão: auto — 2..4 em CUDA/Linux, 0 em MPS/CPU)')
+    parser.add_argument('--amp', action='store_true',
+                       help='Ativa mixed precision (BF16/FP16) em GPU CUDA para acelerar o treino')
     parser.add_argument('--num-classes', type=int, default=15,
                        help='Nº de saídas do modelo (aumente se o dataset combinado tiver doenças novas)')
     parser.add_argument('--field7', action='store_true',
@@ -879,8 +935,12 @@ def main():
     # Setup
     set_seed(42)
     device = get_device()
-    print(f"🖥️  Device: {device}")
-    print(f"🔢 PyTorch: {torch.__version__}")
+    num_workers = resolve_num_workers(device, args.num_workers)
+    use_amp = bool(args.amp and device.type == "cuda")
+    if device.type == "cuda":
+        torch.backends.cudnn.benchmark = True
+    print(f"🖥️  Device: {device}" + (f" ({torch.cuda.get_device_name(0)})" if device.type == "cuda" else ""))
+    print(f"🔢 PyTorch: {torch.__version__} | workers={num_workers} | amp={use_amp}")
     
     # Config
     if not 0 < args.target_precision <= 1:
@@ -894,6 +954,8 @@ def main():
         batch_size=args.batch_size,
         learning_rate=args.lr,
     )
+    if args.accumulation_steps is not None:
+        config.accumulation_steps = max(1, args.accumulation_steps)
     config.num_classes = args.num_classes
     
     print(f"\n⚙️  Configuração:")
@@ -929,7 +991,8 @@ def main():
                       leaf_crop=args.leaf_crop, leaf_crop_mask_bg=args.leaf_crop_mask_bg,
                       domain_aug=args.domain_aug, freeze_backbone=args.freeze_backbone,
                       class_names=class_names, ckpt_out=args.ckpt_out,
-                      run_metadata=run_metadata, target_precision=args.target_precision)
+                      run_metadata=run_metadata, target_precision=args.target_precision,
+                      num_workers=num_workers, use_amp=use_amp)
         return
 
     # Carrega dados

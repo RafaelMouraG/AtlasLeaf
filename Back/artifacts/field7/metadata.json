@@ -1,11 +1,11 @@
 {
   "project": "AtlasLeaf",
-  "version": "field7-1.0",
+  "version": "field7-2.0",
   "task": "soybean field disease classification (7 classes)",
   "model": "efficientnet_v2_s",
-  "dataset": "asdid (7 classes de campo)",
-  "total_images": 9698,
-  "num_classes": 15,
+  "dataset": "asdid + mendeley_v2 (7 classes de campo)",
+  "total_images": 9459,
+  "num_classes": 7,
   "supported_class_ids": [
     0,
     1,
@@ -15,7 +15,16 @@
     12,
     13
   ],
-  "masked_output": true,
+  "output_class_ids": [
+    0,
+    1,
+    2,
+    3,
+    7,
+    12,
+    13
+  ],
+  "masked_output": false,
   "classes": [
     {
       "id": "0",
@@ -46,60 +55,11 @@
       "severity": "high"
     },
     {
-      "id": "4",
-      "name": "septoria_brown_spot",
-      "friendly_name": "Mancha Parda / Septoriose",
-      "scientific_name": "Septoria glycines",
-      "severity": "medium"
-    },
-    {
-      "id": "5",
-      "name": "bacterial_blight",
-      "friendly_name": "Mancha Bacteriana",
-      "scientific_name": "Pseudomonas savastanoi pv. glycinea",
-      "severity": "medium"
-    },
-    {
-      "id": "6",
-      "name": "powdery_mildew",
-      "friendly_name": "Oídio",
-      "scientific_name": "Microsphaera diffusa",
-      "severity": "low"
-    },
-    {
       "id": "7",
       "name": "downy_mildew",
       "friendly_name": "Míldio",
       "scientific_name": "Peronospora manshurica",
       "severity": "medium"
-    },
-    {
-      "id": "8",
-      "name": "soybean_mosaic",
-      "friendly_name": "Vírus do Mosaico",
-      "scientific_name": "Soybean mosaic virus (SMV)",
-      "severity": "low"
-    },
-    {
-      "id": "9",
-      "name": "yellow_mosaic",
-      "friendly_name": "Mosaico Amarelo",
-      "scientific_name": "Bean yellow mosaic virus (BYMV)",
-      "severity": "low"
-    },
-    {
-      "id": "10",
-      "name": "sudden_death_syndrome",
-      "friendly_name": "Síndrome da Morte Súbita",
-      "scientific_name": "Fusarium virguliforme",
-      "severity": "critical"
-    },
-    {
-      "id": "11",
-      "name": "southern_blight",
-      "friendly_name": "Podridão do Colo",
-      "scientific_name": "Sclerotium rolfsii",
-      "severity": "high"
     },
     {
       "id": "12",
@@ -114,16 +74,149 @@
       "friendly_name": "Mancha Olho-de-Rã",
       "scientific_name": "Cercospora sojina",
       "severity": "medium"
-    },
-    {
-      "id": "14",
-      "name": "phytotoxicity",
-      "friendly_name": "Fitotoxicidade",
-      "scientific_name": "N/A (dano químico)",
-      "severity": "medium"
     }
   ],
-  "metrics": {},
+  "metrics": {
+    "n": 2477,
+    "test_accuracy": 95.47840129188533,
+    "test_balanced_acc": 95.33616466528755,
+    "per_class": {
+      "healthy": {
+        "precision": 0.8295218295218295,
+        "recall": 0.9950124688279302,
+        "f1-score": 0.9047619047619048,
+        "support": 401.0
+      },
+      "asian_rust": {
+        "precision": 0.98828125,
+        "recall": 0.92,
+        "f1-score": 0.9529190207156308,
+        "support": 275.0
+      },
+      "target_spot": {
+        "precision": 0.9938461538461538,
+        "recall": 0.99079754601227,
+        "f1-score": 0.9923195084485407,
+        "support": 326.0
+      },
+      "cercospora_blight": {
+        "precision": 0.9965753424657534,
+        "recall": 0.9667774086378738,
+        "f1-score": 0.9814502529510961,
+        "support": 301.0
+      },
+      "downy_mildew": {
+        "precision": 0.9828571428571429,
+        "recall": 0.900523560209424,
+        "f1-score": 0.9398907103825137,
+        "support": 191.0
+      },
+      "potassium_deficiency": {
+        "precision": 1.0,
+        "recall": 0.9951573849878934,
+        "f1-score": 0.9975728155339806,
+        "support": 413.0
+      },
+      "frogeye_leaf_spot": {
+        "precision": 0.9608938547486033,
+        "recall": 0.9052631578947369,
+        "f1-score": 0.9322493224932249,
+        "support": 570.0
+      },
+      "accuracy": 0.9547840129188534,
+      "macro avg": {
+        "precision": 0.9645679390627834,
+        "recall": 0.9533616466528755,
+        "f1-score": 0.9573090764695559,
+        "support": 2477.0
+      },
+      "weighted avg": {
+        "precision": 0.9595534247544246,
+        "recall": 0.9547840129188534,
+        "f1-score": 0.9554597306090267,
+        "support": 2477.0
+      }
+    },
+    "confusion_matrix": [
+      [
+        399,
+        0,
+        0,
+        1,
+        1,
+        0,
+        0
+      ],
+      [
+        1,
+        253,
+        0,
+        0,
+        0,
+        0,
+        21
+      ],
+      [
+        1,
+        2,
+        323,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        10,
+        0,
+        0,
+        291,
+        0,
+        0,
+        0
+      ],
+      [
+        19,
+        0,
+        0,
+        0,
+        172,
+        0,
+        0
+      ],
+      [
+        2,
+        0,
+        0,
+        0,
+        0,
+        411,
+        0
+      ],
+      [
+        49,
+        1,
+        2,
+        0,
+        2,
+        0,
+        516
+      ]
+    ],
+    "labels": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6
+    ],
+    "selective": {
+      "threshold": 0.564821183681488,
+      "coverage": 0.9790068631408962,
+      "accuracy": 96.65979381443299
+    }
+  },
   "preprocessing": {
     "resize": 384,
     "mean": [
@@ -138,10 +231,14 @@
     ],
     "leaf_crop": false
   },
-  "confidence_threshold": 0.6,
+  "confidence_threshold": 0.564821183681488,
   "calibration": {
-    "status": "not_available",
-    "note": "O limiar deste artefato não foi calibrado com o protocolo atual. Retreine com --field7."
+    "threshold": 0.564821183681488,
+    "target_precision": 0.999,
+    "coverage": 0.9942307692307693,
+    "selective_accuracy": 0.9990328820116054,
+    "n_validation": 1040,
+    "status": "calibrated"
   },
   "input_shape": [
     1,
@@ -150,13 +247,192 @@
     384
   ],
   "evaluation": {
-    "protocol": "camera-holdout (treina Canon, testa Moto) — proxy campo→campo",
-    "note": "Métricas deste artefato não são exibidas porque os valores antigos divergiam do relatório. Retreine e exporte com o pipeline atual."
+    "protocol": "camera-holdout (treina Canon + Mendeley V2, testa Moto) — proxy campo→campo",
+    "n": 2477,
+    "test_accuracy": 95.47840129188533,
+    "test_balanced_acc": 95.33616466528755,
+    "per_class": {
+      "healthy": {
+        "precision": 0.8295218295218295,
+        "recall": 0.9950124688279302,
+        "f1-score": 0.9047619047619048,
+        "support": 401.0
+      },
+      "asian_rust": {
+        "precision": 0.98828125,
+        "recall": 0.92,
+        "f1-score": 0.9529190207156308,
+        "support": 275.0
+      },
+      "target_spot": {
+        "precision": 0.9938461538461538,
+        "recall": 0.99079754601227,
+        "f1-score": 0.9923195084485407,
+        "support": 326.0
+      },
+      "cercospora_blight": {
+        "precision": 0.9965753424657534,
+        "recall": 0.9667774086378738,
+        "f1-score": 0.9814502529510961,
+        "support": 301.0
+      },
+      "downy_mildew": {
+        "precision": 0.9828571428571429,
+        "recall": 0.900523560209424,
+        "f1-score": 0.9398907103825137,
+        "support": 191.0
+      },
+      "potassium_deficiency": {
+        "precision": 1.0,
+        "recall": 0.9951573849878934,
+        "f1-score": 0.9975728155339806,
+        "support": 413.0
+      },
+      "frogeye_leaf_spot": {
+        "precision": 0.9608938547486033,
+        "recall": 0.9052631578947369,
+        "f1-score": 0.9322493224932249,
+        "support": 570.0
+      },
+      "accuracy": 0.9547840129188534,
+      "macro avg": {
+        "precision": 0.9645679390627834,
+        "recall": 0.9533616466528755,
+        "f1-score": 0.9573090764695559,
+        "support": 2477.0
+      },
+      "weighted avg": {
+        "precision": 0.9595534247544246,
+        "recall": 0.9547840129188534,
+        "f1-score": 0.9554597306090267,
+        "support": 2477.0
+      }
+    },
+    "confusion_matrix": [
+      [
+        399,
+        0,
+        0,
+        1,
+        1,
+        0,
+        0
+      ],
+      [
+        1,
+        253,
+        0,
+        0,
+        0,
+        0,
+        21
+      ],
+      [
+        1,
+        2,
+        323,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        10,
+        0,
+        0,
+        291,
+        0,
+        0,
+        0
+      ],
+      [
+        19,
+        0,
+        0,
+        0,
+        172,
+        0,
+        0
+      ],
+      [
+        2,
+        0,
+        0,
+        0,
+        0,
+        411,
+        0
+      ],
+      [
+        49,
+        1,
+        2,
+        0,
+        2,
+        0,
+        516
+      ]
+    ],
+    "labels": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6
+    ],
+    "selective": {
+      "threshold": 0.564821183681488,
+      "coverage": 0.9790068631408962,
+      "accuracy": 96.65979381443299
+    },
+    "note": "Deploy em lavoura diferente tende a ficar ABAIXO disso. Validar com fotos reais."
   },
   "training": {
     "checkpoint": "artifacts/field7/model.pth",
-    "epoch": 33,
-    "val_balanced_acc": 88.21899308064103,
-    "recipe": "unified (sem recorte) + freeze-backbone + domain-aug + sampler sqrt"
+    "epoch": 27,
+    "val_balanced_acc": 99.69543387646837,
+    "config": {
+      "model_name": "efficientnet_v2_s",
+      "num_classes": 7,
+      "dropout": 0.5,
+      "pretrained": true,
+      "input_size": 384,
+      "epochs": 40,
+      "batch_size": 16,
+      "learning_rate": 0.0001,
+      "weight_decay": 0.01,
+      "accumulation_steps": 3,
+      "onecycle_pct_start": 0.1,
+      "onecycle_div_factor": 25.0,
+      "onecycle_final_div_factor": 10000.0,
+      "early_stopping_patience": 15,
+      "early_stopping_min_delta": 0.001,
+      "focal_gamma_start": 1.0,
+      "focal_gamma_end": 3.0,
+      "focal_gamma_warmup_epochs": 20,
+      "label_smoothing": 0.1,
+      "mixup_alpha": 0.4,
+      "cutmix_alpha": 0.4,
+      "augmentation_strength": "strong"
+    },
+    "run": {
+      "seed": 42,
+      "git_revision": "1928f06427efcbd4f014d7bc57a42c8ca1a05570",
+      "split_file": "splits_camera_mendeley_train.json",
+      "split_sha256": "9b3105c4134c619be2c54a7b5d8b23994d5a3137b8f0fe7bef92717f14670a59",
+      "field7": true,
+      "output_class_ids": [
+        0,
+        1,
+        2,
+        3,
+        7,
+        12,
+        13
+      ],
+      "command": "scripts/train_field7.py --data-dir /home/rafael-moura/projetos/AtlasLeaf/Back/datasets/unified_resized --source-split --field7 --domain-aug --amp --num-workers 6 --ckpt-out /home/rafael-moura/projetos/AtlasLeaf/Back/artifacts/runs/overnight_20261126_154443/06_effv2s_ft_camera_mendeley.pth --model efficientnet_v2_s --split-file splits_camera_mendeley_train.json --epochs 40 --batch-size 16 --accumulation-steps 3 --lr 1e-4"
+    }
   }
 }

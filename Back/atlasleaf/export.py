@@ -16,9 +16,9 @@ import torch
 from atlasleaf.artifacts import classifier_output_count, requires_output_mask, output_class_ids as checkpoint_output_class_ids
 from atlasleaf.labels import FIELD7_CLASS_IDS, field7_classes
 from atlasleaf.model import create_model
-from atlasleaf.paths import FIELD7_ARTIFACT_DIR, from_back
+from atlasleaf.paths import BACK_DIR, FIELD7_ARTIFACT_DIR, from_back
 
-BACK = Path(__file__).parent
+BACK = BACK_DIR
 
 def main():
     ap = argparse.ArgumentParser()
@@ -45,9 +45,12 @@ def main():
     output_class_ids = checkpoint_output_class_ids(ck, num_classes)
     masked_output = requires_output_mask(num_classes)
 
-    print(f"🔄 Carregando {args.ckpt}...")
-    model = create_model("efficientnet_v2_s", num_classes=num_classes,
-                         pretrained=False, dropout=0.5)
+    cfg = ck.get("config", {})
+    model_name = cfg.get("model_name", "efficientnet_v2_s")
+    dropout = float(cfg.get("dropout", 0.5))
+    print(f"🔄 Carregando {args.ckpt} (backbone={model_name})...")
+    model = create_model(model_name, num_classes=num_classes,
+                         pretrained=False, dropout=dropout)
     model.load_state_dict(ck["model_state_dict"])
     model.eval()
     print(f"   checkpoint epoch={ck.get('epoch')} val_bal_acc={ck.get('val_bal_acc')}")
@@ -68,23 +71,36 @@ def main():
     classes = field7_classes()
     by_id = {int(c["id"]): c for c in classes}
 
-    # nº de imagens do ASDID nas 7 classes suportadas (p/ o painel do app)
+    # nº de imagens do dataset nas 7 classes suportadas (p/ o painel do app)
     total_images = None
-    man_path = BACK / "datasets/unified/manifest.json"
-    if man_path.exists():
-        dist = json.load(open(man_path)).get("class_distribution", {})
-        total_images = sum(v["count"] for v in dist.values() if int(v["id"]) in FIELD7_CLASS_IDS)
+    for rel_manifest in ("datasets/unified/manifest.json", "datasets/unified_resized/manifest.json"):
+        man_path = BACK / rel_manifest
+        if man_path.exists():
+            dist = json.load(open(man_path)).get("class_distribution", {})
+            total_images = sum(v["count"] for v in dist.values() if int(v["id"]) in FIELD7_CLASS_IDS)
+            break
 
     calibration = ck.get("calibration", {})
     confidence_threshold = (args.confidence_threshold if args.confidence_threshold is not None
                             else calibration.get("threshold", 0.6))
     heldout_metrics = ck.get("test_metrics", {}).get("test", {})
+    split_file = run.get("split_file", "")
+    uses_mendeley = "mendeley" in split_file and "holdout" not in split_file
+    dataset_label = (
+        "asdid + mendeley_v2 (7 classes de campo)" if uses_mendeley
+        else "asdid (7 classes de campo)"
+    )
+    protocol_label = (
+        "camera-holdout (treina Canon + Mendeley V2, testa Moto) — proxy campo→campo"
+        if uses_mendeley
+        else "camera-holdout (treina Canon, testa Moto) — proxy campo→campo"
+    )
     metadata = {
         "project": "AtlasLeaf",
-        "version": "field7-1.0",
+        "version": "field7-2.0" if uses_mendeley else "field7-1.0",
         "task": "soybean field disease classification (7 classes)",
-        "model": "efficientnet_v2_s",
-        "dataset": "asdid (7 classes de campo)",
+        "model": model_name,
+        "dataset": dataset_label,
         "total_images": total_images,
         "num_classes": num_classes,
         "supported_class_ids": FIELD7_CLASS_IDS,
@@ -102,7 +118,7 @@ def main():
         "calibration": calibration,
         "input_shape": [1, 3, args.input_size, args.input_size],
         "evaluation": {
-            "protocol": "camera-holdout (treina Canon, testa Moto) — proxy campo→campo",
+            "protocol": protocol_label,
             **heldout_metrics,
             "note": "Deploy em lavoura diferente tende a ficar ABAIXO disso. Validar com fotos reais.",
         },

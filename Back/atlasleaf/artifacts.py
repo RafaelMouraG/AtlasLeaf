@@ -9,7 +9,17 @@ from .labels import FIELD7_CLASS_IDS
 
 def classifier_output_count(checkpoint: dict[str, Any]) -> int:
     """Infere a quantidade de logits sem depender de flags externas."""
-    return int(checkpoint["model_state_dict"]["classifier.1.weight"].shape[0])
+    state = checkpoint["model_state_dict"]
+    for key in ("classifier.1.weight", "classifier.3.weight", "fc.1.weight", "fc.weight"):
+        if key in state:
+            return int(state[key].shape[0])
+    head_weights = [
+        (k, v) for k, v in state.items()
+        if (k.startswith("classifier.") or k.startswith("fc.")) and k.endswith(".weight") and v.ndim == 2
+    ]
+    if head_weights:
+        return int(head_weights[-1][1].shape[0])
+    raise KeyError("Não foi possível inferir o número de saídas do classificador no checkpoint")
 
 
 def output_class_ids(checkpoint: dict[str, Any], num_outputs: int) -> list[int]:

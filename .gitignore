@@ -29,6 +29,9 @@ temp_dataset
 *.onnx
 *.onnx.data
 
+# Logs e runs de experimentos locais
+artifacts/runs/
+
 # --- NÃO ignorar metadados (pequenos, necessários) ---
 # atlasleaf_metadata.json - COMMITAR
 # atlasleaf_v2_metadata.json - COMMITAR

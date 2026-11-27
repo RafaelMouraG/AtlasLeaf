@@ -27,11 +27,11 @@ vez da lesão. Provado com um *probe* linear: dá para prever a **fonte** da fot
 
 ---
 
-## 🧠 Modelo atual — `field7`
+## 🧠 Modelo atual — `field7` (`v2.0`)
 
-**Arquitetura:** EfficientNet-V2-S (ImageNet) · backbone congelado, só a cabeça treinada · entrada 384×384.
+**Arquitetura:** EfficientNet-V2-S (ImageNet) · fine-tune completo (`lr=1e-4`, `domain_aug`, Mixup/CutMix, Focal Loss) · 7 saídas nativas · entrada 384×384.
 
-**7 classes de campo** (as com lastro real de campo no ASDID):
+**7 classes de campo** (as com lastro real de campo no ASDID + reforço de 2ª fonte no Mendeley V2):
 
 | Classe | Nome | Científico |
 |---|---|---|
@@ -45,29 +45,32 @@ vez da lesão. Provado com um *probe* linear: dá para prever a **fonte** da fot
 
 ### Resultados (honestos)
 
-Avaliação por **split de câmera** (treina na câmera Canon, testa na Motorola — proxy campo→campo).
-Acurácia balanceada no teste em **câmera não vista**: **74,6%** · in-domain (mesma câmera) ~88% *(otimista, não representa deploy)*.
+Avaliação por **split de câmera** (treina na câmera Canon do ASDID + Mendeley V2, testa na câmera Motorola do ASDID — nunca vista no treino).
+Acurácia balanceada no teste em **câmera não vista**: **95,3%** (acurácia geral **95,5%**) · limiar calibrado na validação (`0,565`): **96,7%** de acerto cobrindo **97,9%** dos casos.
 
-| Doença | Recall | Precisão | F1 | Imgs treino (Canon) | Imgs teste (Moto) |
-|---|---:|---:|---:|---:|---:|
-| Folha sadia | 91% | 52% | 0,66 | 1297 | 452 |
-| Míldio | 87% | 59% | 0,71 | 461 | 191 |
-| Deficiência de potássio | 86% | 88% | 0,87 | 619 | 413 |
-| Mancha alvo | 77% | 94% | 0,84 | 753 | 326 |
-| Ferrugem asiática | 70% | 84% | 0,77 | 1431 | 342 |
-| Mancha olho-de-rã | 68% | 85% | 0,76 | 970 | 570 |
-| Crestamento de cercospora | 42% | 96% | 0,58 | 1351 | 361 |
+| Doença | Recall | Precisão | F1 | Imgs teste (Moto) |
+|---|---:|---:|---:|---:|
+| Deficiência de potássio | 99,5% | 100,0% | 0,998 | 413 |
+| Mancha alvo | 99,1% | 99,4% | 0,992 | 326 |
+| Crestamento de cercospora | 96,7% | 99,7% | 0,981 | 301 |
+| Ferrugem asiática | 92,0% | 98,8% | 0,953 | 275 |
+| Míldio | 90,1% | 98,3% | 0,940 | 191 |
+| Mancha olho-de-rã | 90,5% | 96,1% | 0,932 | 570 |
+| Folha sadia | 99,5% | 83,0% | 0,905 | 401 |
 
 > **Recall** = das folhas que realmente têm a doença, quantas o modelo pega. **Precisão** = quando ele
-> aponta a doença, quantas vezes acerta. Métricas do conjunto de teste em câmera não vista (2.655 imagens
-> Motorola); numa lavoura diferente tendem a ser um pouco menores. Total de treino: 6.882 imagens (ASDID, câmera Canon).
+> aponta a doença, quantas vezes acerta. Métricas do conjunto de teste em câmera não vista (2.477 imagens
+> Motorola). Total de treino + validação: 6.976 imagens (ASDID Canon + Mendeley V2).
 
-> ⚠️ Em uma lavoura **diferente** (outra região/telefone/cultivar) o número real tende a ficar **abaixo
-> de 75%** — Canon e Motorola dividem as mesmas parcelas. O teste que fecha a questão é rodar com fotos
-> reais da sua lavoura (ver `scripts/evaluate_field.py`).
+> 🌍 **Teste cross-região (EUA → Índia):** segurando o Mendeley V2 inteiro fora do treino (295 fotos de
+> outro país/câmera), a ConvNeXt-Tiny congelada atingiu **84,4%** de acurácia balanceada. Ainda assim,
+> em uma lavoura nova (outra região/cultivar), o número real pode variar — valide com fotos reais da sua
+> lavoura usando `scripts/evaluate_field.py`.
 
-**Descartado por não ajudar:** recorte/segmentação de folha (o atalho de fonte vive nos pixels da folha,
-não no fundo) e fine-tune completo (distorce as features e generaliza **pior** que o backbone congelado).
+**Descoberta da v2.0:** antes o fine-tune completo piorava por usar LR alto (`5e-4`) em fonte única; com
+**LR baixo (`1e-4`) + `domain_aug` + 2ª fonte de campo (Mendeley V2)**, o fine-tune superou o backbone
+congelado em **+20 pp** (de ~74,6% para **95,3%**, e *Cercospora* de 42% para **96,7%** de recall).
+Recorte/segmentação de folha continua descartado.
 
 ---
 
@@ -78,11 +81,11 @@ não no fundo) e fine-tune completo (distorce as features e generaliza **pior** 
 ```
 
 - **Sem recorte** de folha (testado e descartado).
-- **Limiar de confiança** (padrão 0,6): abaixo disso a predição é marcada como *baixa confiança* e
-  sugere revisão humana. Em teste, no limiar 0,6 o modelo defere ~parte dos casos mas acerta quase 100%
-  nos que responde — bom para uso como apoio à decisão.
-- A saída é renormalizada **apenas entre as 7 classes suportadas** (o `.onnx` tem 15 saídas por legado;
-  `supported_class_ids` na metadata define quais valem).
+- **Limiar de confiança** (calibrado exclusivamente na validação: `0,565`): abaixo disso a predição é
+  marcada como *baixa confiança* e sugere revisão humana. No holdout Moto, atinge **96,7%** de acerto
+  cobrindo **97,9%** dos casos — ótimo para apoio à decisão.
+- A saída tem **7 logits nativos** (`masked_output: false`), com `output_class_ids` na metadata mapeando
+  cada posição ao ID histórico do manifest.
 
 ---
 
@@ -117,22 +120,20 @@ cd Back
 ```
 Reporta acurácia, acurácia balanceada, matriz de confusão e a acurácia **só nas predições confiantes**.
 
-### Treinar (reprodutível, ~2 min/época no dataset reduzido)
+### Treinar (reprodutível, GPU CUDA/ROCm ou Google Colab Pro)
 
 ```bash
 cd Back
 ../.venv/bin/python scripts/train_field7.py --data-dir datasets/unified_resized \
-    --source-split --split-file splits_camera.json \
-    --field7 --freeze-backbone --domain-aug --epochs 40 \
-    --ckpt-out artifacts/field7/model.pth
+    --source-split --split-file splits_camera_mendeley_train.json \
+    --field7 --domain-aug --amp --epochs 40 --batch-size 16 --accumulation-steps 3 --lr 1e-4 \
+    --target-precision 0.999 --ckpt-out artifacts/field7/model.pth
 # exportar o ONNX + metadata a partir do checkpoint:
 ../.venv/bin/python scripts/export_model.py --ckpt artifacts/field7/model.pth
 ```
 
 > 💡 Em testes, **sempre** use `--ckpt-out` com um nome próprio para não sobrescrever o modelo bom.
-
-> O artefato `field7` antigo possui 15 saídas mascaradas e métricas legadas não rastreáveis. Gere um novo
-> checkpoint com `--field7` para obter 7 saídas nativas, limiar calibrado na validação e métricas anexadas ao checkpoint.
+> No Google Colab Pro, use [colab_train_atlasleaf.ipynb](Back/colab_train_atlasleaf.ipynb).
 
 Veja [a arquitetura do projeto](Back/docs/architecture.md) para o contrato de datasets/modelos e os comandos canônicos.
 
@@ -219,11 +220,14 @@ AtlasLeaf/
 
 Crédito, licença e uso de cada fonte em [docs/datasets.md](Back/docs/datasets.md).
 
-O modelo publicado **field7 é treinado exclusivamente com o ASDID** (o split por câmera só inclui
-imagens dessa fonte):
+O modelo publicado **`field7` (`v2.0`) é treinado com ASDID + Mendeley V2** (split por câmera mantendo
+Motorola como holdout exclusivo):
 
 - **ASDID** — Bevers, N., Sikora, E. J., & Hardy, N. B. (2022). *Auburn Soybean Disease Image Dataset*.
   Dryad. https://doi.org/10.5061/dryad.41ns1rnj3 · CC0 1.0
+- **Mendeley V2** — Thorwat, M., Magdum, P., Jadhav, S., Sutar, A., & Oswal, R. (2026). *Multi-Class
+  Soybean Leaf Disease Dataset: Healthy and Diseased Leaf Images for Machine Learning* (V2). Mendeley
+  Data. https://data.mendeley.com/datasets/6fhphxg297/2 · **CC BY 4.0**
 
 Outras fontes (**SoyNet**, um dataset **Kaggle**) existem no dataset unificado por herança das versões
 antigas, mas **não são usadas pelo modelo atual** — detalhes e citações no doc.

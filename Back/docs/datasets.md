@@ -6,33 +6,31 @@ licença (algumas fontes são CC BY, que **exige atribuição**) e de honestidad
 
 ## Resumo: o que o modelo publicado usa
 
-**O modelo field7 é treinado exclusivamente com o ASDID.** O split por câmera
-(`splits_camera.json`) divide por câmera (Canon vs Motorola), rótulo que só o ASDID tem — logo as
-outras fontes ficam de fora automaticamente. Composição real do treino/val/teste do field7:
+**O modelo `field7` (`v2.0`) é treinado com ASDID (câmera Canon) + Mendeley V2** nas 7 classes de campo,
+mantendo as fotos **Motorola** do ASDID como holdout exclusivo (`splits_camera_mendeley_train.json`):
 
 | Conjunto | Imagens | Fontes |
 |---|---:|---|
-| train | 5.854 | só `asdid` |
-| val | 1.028 | só `asdid` |
-| test (cross-camera) | 2.655 | só `asdid` |
+| train | 5.936 | `asdid` (Canon) + `mendeleyv2` |
+| val | 1.040 | `asdid` (Canon) + `mendeleyv2` |
+| test (cross-camera) | 2.477 | só `asdid` (Motorola — nunca vista no treino) |
 
-Contagem por fonte no dataset unificado (`datasets/unified/manifest.json`, 10.730 imagens — pasta
-**não versionada**, resíduo da unificação v3.0/3.1):
+Contagem por fonte no dataset reconstruído (`datasets/unified_resized/manifest.json`, 10.147 imagens — pasta
+**não versionada**):
 
-| Fonte (`source`) | Imagens | Usada no field7? |
+| Fonte (`source`) | Imagens | Usada no field7 v2.0? |
 |---|---:|---|
-| `asdid` | 10.027 | **Sim** — é a única base do modelo |
-| `kaggle_soybean` | 618 | Não — classes fora do field7 e sem rótulo de câmera |
-| `soynet` | 85 | Não — idem |
+| `asdid` | 9.648 | **Sim** — base principal (Canon no treino/val, Moto no holdout) |
+| `mendeleyv2` | 499 | **Sim** — 295 imgs nas classes `healthy`, `asian_rust` e `cercospora_blight` |
 
 ---
 
-## Fonte usada pelo modelo
+## Fontes usadas pelo modelo
 
-### ASDID — Auburn Soybean Disease Image Dataset (única base do field7)
+### ASDID — Auburn Soybean Disease Image Dataset
 
 Fotos de campo de folhas de soja de estações de pesquisa do Alabama (EUA), câmeras Canon EOS 7D
-Mark II e smartphone Motorola Moto Z2 Play; ~9.981 imagens em 8 categorias (sadia, crestamento
+Mark II e smartphone Motorola Moto Z2 Play; ~9.648 imagens em 8 categorias (sadia, crestamento
 bacteriano, cercospora, míldio, mancha olho-de-rã, ferrugem, mancha alvo, deficiência de potássio).
 
 - **Citação:** Bevers, N., Sikora, E. J., & Hardy, N. B. (2022). *Pictures of diseased soybean leaves
@@ -42,6 +40,17 @@ bacteriano, cercospora, míldio, mancha olho-de-rã, ferrugem, mancha alvo, defi
   identification using original field images and transfer learning with convolutional neural
   networks.* Computers and Electronics in Agriculture, 203, 107449.
 - **Licença:** CC0 1.0 (Dryad — domínio público). Atribuição não é exigida, mas é dada por cortesia.
+
+### Mendeley V2 — Multi-Class Soybean Leaf Disease Dataset (2ª fonte de campo)
+
+Fotos de campo (DSLR/smartphone), 5 classes (`Healthy`, `Bacterial Blight`, `Cercospora Leaf Blight`,
+`Sudden Death Syndrome`, `Rust`; 499 imagens no total, sendo 295 nas 3 classes compatíveis com `field7`).
+Integrada na `v2.0` como 2ª fonte independente para reforçar *Cercospora* e combater o viés de fonte.
+
+- **Citação:** Thorwat, M., Magdum, P., Jadhav, S., Sutar, A., & Oswal, R. (2026). *Multi-Class Soybean
+  Leaf Disease Dataset: Healthy and Diseased Leaf Images for Machine Learning* (V2) [Dataset]. Mendeley
+  Data. https://data.mendeley.com/datasets/6fhphxg297/2
+- **Licença:** **CC BY 4.0** — atribuição obrigatória cumprida aqui e no `README.md`.
 
 ---
 
@@ -70,18 +79,6 @@ PlantVillage/PlantDoc.
 ---
 
 ## Fontes planejadas (ainda não integradas)
-
-### Mendeley — Multi-Class Soybean Leaf Disease Dataset (candidata a 2ª fonte de campo)
-
-Fotos de campo (DSLR/smartphone), 5 classes (Healthy, Bacterial Blight, Cercospora Leaf Blight,
-Sudden Death Syndrome, Soybean Rust). Candidata a 2ª fonte independente para combater o confounding de
-fonte (ver README, seção de viés de fonte).
-
-- **Citação:** Thorwat, M., Magdum, P., Jadhav, S., Sutar, A., & Oswal, R. (2026). *Multi-Class Soybean
-  Leaf Disease Dataset: Healthy and Diseased Leaf Images for Machine Learning* (V2) [Dataset]. Mendeley
-  Data. https://data.mendeley.com/datasets/6fhphxg297/2
-- **Licença:** CC BY 4.0 — **exige atribuição** ao usar. Mover para a tabela "Fontes usadas" quando
-  integrada.
 
 ### Coleta própria — oeste baiano
 
