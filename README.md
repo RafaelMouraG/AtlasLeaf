@@ -7,6 +7,16 @@
 [![ONNX](https://img.shields.io/badge/ONNX-Runtime-green.svg)](https://onnxruntime.ai)
 [![Streamlit](https://img.shields.io/badge/Streamlit-1.59-ff4b4b.svg)](https://streamlit.io)
 
+## 🏆 Destaques
+
+- **95,3% de acurácia balanceada em câmera nunca vista no treino** (7 classes, 2.477 imagens de teste), com limiar calibrado que chega a 96,7% de acerto cobrindo 97,9% dos casos.
+- **Diagnóstico de vazamento de domínio:** um modelo com 98,5% na validação falhava em campo. Um *probe* linear provou que ele previa a **fonte da foto** com 99% de acerto e mostrou que o modelo tinha aprendido a câmera, não a doença.
+- **Avaliação honesta como regra:** splits por fonte e por câmera, teste cross-região (EUA → Índia) e early stopping por acurácia balanceada.
+- **Pipeline completo:** treino reprodutível (CUDA/ROCm/Colab), export para ONNX, inferência com TTA e detecção de incerteza, e interface web em Streamlit.
+
+> 📌 **Status:** este repositório é a versão de portfólio do projeto, congelada no modelo `field7` v2.0.
+> A evolução (novos dados de campo e novas classes) continua em um produto privado.
+
 ---
 
 ## 🎯 Sobre
@@ -99,6 +109,10 @@ source .venv/bin/activate          # Windows: .venv\Scripts\activate
 pip install -r requirements.txt    # streamlit>=1.59 (versões antigas quebram no Python 3.14)
 ```
 
+> ⚠️ **Os pesos treinados (`model.pth` / `model.onnx`) não são distribuídos.** O repositório traz só o
+> `metadata.json`. Para rodar a interface, treine o modelo com o comando da seção *Treinar* abaixo
+> (os datasets são públicos, veja *Datasets e créditos*).
+
 ---
 
 ## 🚀 Uso
@@ -109,7 +123,7 @@ pip install -r requirements.txt    # streamlit>=1.59 (versões antigas quebram n
 cd Back
 ../.venv/bin/streamlit run streamlit_app.py
 ```
-Carrega automaticamente o modelo `field7`, mostra as 7 doenças e sinaliza baixa confiança.
+Carrega o modelo `field7` de `Back/artifacts/field7/` (depois de treinado e exportado), mostra as 7 doenças e sinaliza baixa confiança.
 
 ### Testar com suas próprias fotos (o número que importa)
 
@@ -162,8 +176,8 @@ AtlasLeaf/
     │   ├── protocolo_coleta.md       # Como coletar o dataset do oeste baiano
     │   └── prompt_busca_datasets.md  # Prompt p/ Claude/Gemini acharem datasets complementares
     │
-    ├── artifacts/                    # ONNX, checkpoints e metadata
-    │   └── field7/                   # Modelo em produção
+    ├── artifacts/                    # metadata versionada; pesos gerados localmente
+    │   └── field7/                   # metadata.json (+ model.pth/.onnx após treinar)
     └── datasets/ (não versionado)
         ├── unified/          # ASDID + Kaggle + SoyNet unificados
         ├── unified_resized/  # Imagens 768px (treino rápido, sem recorte)
@@ -179,7 +193,8 @@ AtlasLeaf/
 - **Balanceamento suave:** `WeightedRandomSampler` com peso `1/√(contagem)` — sem empilhar oversampling
   + pesos de loss (o empilhamento colapsava as classes grandes).
 - **Domain augmentation:** resolução/JPEG/cor aleatórios para apagar a assinatura de fonte nos pixels.
-- **Backbone congelado:** preserva as features transferíveis do ImageNet (generaliza melhor que fine-tune).
+- **Fine-tune com LR baixo:** com `lr=1e-4`, `domain_aug` e uma 2ª fonte de campo, o fine-tune completo superou
+  o backbone congelado em +20 pp. Com LR alto (`5e-4`) e fonte única, acontecia o contrário.
 - **Early stopping** por **acurácia balanceada** da validação (não pela loss, que engana com pesos).
 
 ---
@@ -188,8 +203,9 @@ AtlasLeaf/
 
 - Apenas **7 doenças** têm lastro de campo confiável. As demais (estúdio/fonte única) foram **removidas**
   do produto — não são confiáveis em campo e poluiriam as predições.
-- **Cercospora** é a classe mais fraca (~42% recall) — precisa de mais dados.
-- O ~75% é **cross-camera**, ainda otimista para uma lavoura nova. Valide com fotos suas.
+- **Folha sadia** tem a menor precisão (83%): cerca de 1 em cada 6 folhas apontadas como sadias está doente. É o erro mais caro no campo, porque a doença passa despercebida.
+- O 95,3% é **cross-camera dentro do mesmo dataset** e ainda é otimista para uma lavoura nova (o teste
+  cross-região deu 84,4%). Valide com fotos suas.
 - O dataset base (ASDID) é campo real, mas de **poucas câmeras e provável região única** — daí o plano
   de coleta abaixo.
 
@@ -212,7 +228,8 @@ AtlasLeaf/
 - **v1.0** — binário sadia/doente (SoyNet).
 - **v2.0** — 10 doenças (Kaggle, dataset pequeno).
 - **v3.0/3.1** — unificação de datasets (ASDID + Kaggle + SoyNet) e a descoberta do viés de fonte.
-- **field7** *(atual)* — foco nas 7 classes de campo, avaliação honesta, ~75% cross-camera.
+- **field7 v1** — foco nas 7 classes de campo, avaliação honesta, backbone congelado (~75% cross-camera).
+- **field7 v2.0** *(atual)* — fine-tune com LR baixo + `domain_aug` + Mendeley V2: **95,3%** cross-camera.
 
 ---
 
