@@ -22,6 +22,8 @@ temp_dataset
 *.rar
 
 # --- Ignorar Modelos Treinados (Artefatos) ---
+# Baterias de experimentos (versionadas só no repo privado)
+Back/artifacts/runs/
 # Checkpoints PyTorch (pesados ~45MB)
 *.pth
 
