@@ -12,7 +12,7 @@ import onnxruntime as ort
 import numpy as np
 from PIL import Image
 import json
-from atlasleaf.paths import BACK_DIR, FIELD7_ARTIFACT_DIR
+from atlasleaf.paths import FIELD7_ARTIFACT_DIR
 
 # Importa pipeline de inferência
 try:
@@ -41,25 +41,48 @@ SEVERITY_INFO = {
     "none": {"emoji": "✅", "label": "SAUDÁVEL", "color": "#20c997", "action": "Nenhuma ação necessária"},
 }
 
+# Mostrado quando a metadata existe mas os pesos (model.onnx) não.
+MISSING_WEIGHTS_HELP = """
+**Os pesos treinados não estão nesta cópia do projeto.** Este repositório não distribui os pesos
+(`model.pth` / `model.onnx`), só a `metadata.json` com as métricas mostradas acima.
+
+Para rodar o diagnóstico, treine e exporte o modelo (os datasets são públicos):
+
+```bash
+cd Back
+python scripts/train_field7.py --data-dir datasets/unified_resized --source-split \\
+    --split-file splits_camera_mendeley_train.json --field7 --domain-aug --amp \\
+    --epochs 40 --batch-size 16 --accumulation-steps 3 --lr 1e-4 \\
+    --target-precision 0.999 --ckpt-out artifacts/field7/model.pth
+python scripts/export_model.py --ckpt artifacts/field7/model.pth
+```
+"""
+
 # ==================== CARREGAR MODELO ====================
+ONNX_PATH = FIELD7_ARTIFACT_DIR / "model.onnx"
+META_PATH = FIELD7_ARTIFACT_DIR / "metadata.json"
+
+
+@st.cache_data
+def load_metadata() -> dict:
+    """Carrega a metadata do field7 (versionada, existe mesmo sem os pesos)."""
+    if not META_PATH.exists():
+        raise FileNotFoundError(f"Metadata do field7 não encontrada em {META_PATH}.")
+    with open(META_PATH, 'r', encoding='utf-8') as f:
+        return json.load(f)
+
+
 @st.cache_resource
 def load_model():
-    """Carrega modelo ONNX e metadados."""
-    base_dir = BACK_DIR
-    
-    onnx_path = FIELD7_ARTIFACT_DIR / "model.onnx"
-    meta_path = FIELD7_ARTIFACT_DIR / "metadata.json"
-    if not onnx_path.exists() or not meta_path.exists():
-        raise FileNotFoundError("Modelo field7 não encontrado. Execute o treinamento e a exportação primeiro.")
-    with open(meta_path, 'r', encoding='utf-8') as f:
-        metadata = json.load(f)
-    return ort.InferenceSession(str(onnx_path)), metadata, "field7"
+    """Carrega a sessão ONNX e a metadata."""
+    if not ONNX_PATH.exists():
+        raise FileNotFoundError(f"Pesos do field7 não encontrados em {ONNX_PATH}.")
+    return ort.InferenceSession(str(ONNX_PATH)), load_metadata(), "field7"
 
 
+@st.cache_resource
 def load_pytorch_model():
     """Carrega modelo PyTorch diretamente (para TTA)."""
-    base_dir = BACK_DIR
-    
     model_path = FIELD7_ARTIFACT_DIR / "model.pth"
     if not model_path.exists():
         return None, None
@@ -69,7 +92,7 @@ def load_pytorch_model():
     from atlasleaf.model import create_model
     model = create_model(
         model_name=checkpoint.get('config', {}).get('model_name', 'efficientnet_v2_s'),
-        num_classes=checkpoint.get('config', {}).get('num_classes', 15),
+        num_classes=checkpoint.get('config', {}).get('num_classes', 7),
         pretrained=False,
     )
     model.load_state_dict(checkpoint['model_state_dict'])
@@ -119,7 +142,7 @@ def format_results(probs, metadata: dict) -> dict:
     if not supported:
         supported = [int(c['id']) for c in classes]  # retrocompatível: usa todas
 
-    # field7.1 possui sete saídas nativas. A lista faz a ponte entre a posição
+    # O field7 possui sete saídas nativas. A lista faz a ponte entre a posição
     # do logit e o ID histórico do manifest, sem mascarar probabilidades.
     output_class_ids = metadata.get('output_class_ids')
     if output_class_ids and not metadata.get('masked_output', False):
@@ -176,7 +199,7 @@ def predict_with_tta(image: Image.Image, metadata: dict) -> dict:
         st.info("ℹ️ Modelo PyTorch não encontrado. Usando inferência ONNX (sem TTA).")
         return predict_simple(image, metadata)
     
-    # Usa pipeline v3.1 com TTA
+    # Pipeline de inferência com TTA
     device = torch.device('cpu')
     prep = metadata.get('preprocessing', {})
     pipeline = AtlasLeafInference(
@@ -253,53 +276,76 @@ def render_result_card(result: dict, is_top: bool = False, is_uncertain: bool = 
             st.write(f"{result['probability']:.1f}%")
 
 
+def render_model_info(metadata: dict):
+    """Painel com o modelo e as métricas honestas (lidas da metadata)."""
+    metrics = metadata.get('metrics', {})
+    evaluation = metadata.get('evaluation', {})
+    selective = metrics.get('selective') or evaluation.get('selective') or {}
+
+    st.markdown(f"**Modelo:** `{metadata.get('version', 'field7')}` · {metadata.get('model', 'N/A')} · "
+                f"{metadata.get('num_classes', len(metadata.get('classes', [])))} classes de campo")
+
+    col1, col2, col3 = st.columns(3)
+    bal = metrics.get('test_balanced_acc')
+    col1.metric("Acurácia balanceada", f"{bal:.1f}%" if bal is not None else "N/A",
+                help="Em câmera nunca vista no treino.")
+    acc = metrics.get('test_accuracy')
+    col2.metric("Acurácia geral", f"{acc:.1f}%" if acc is not None else "N/A")
+    if selective:
+        col3.metric("Acerto acima do limiar", f"{selective['accuracy']:.1f}%",
+                    help=f"Limiar {selective['threshold']:.3f}: cobre {selective['coverage']*100:.1f}% "
+                         "das fotos; o resto vai para revisão humana.")
+
+    with st.expander("ℹ️ Como o modelo foi avaliado"):
+        if evaluation.get('protocol'):
+            st.write(f"**Protocolo:** {evaluation['protocol']}")
+        n = metrics.get('n')
+        if n:
+            st.write(f"**Imagens de teste:** {n:,}".replace(",", "."))
+        per_class = metrics.get('per_class', {})
+        friendly = {c['name']: c.get('friendly_name', c['name']) for c in metadata.get('classes', [])}
+        rows = [
+            {"Classe": friendly.get(name, name),
+             "Recall": f"{m['recall']*100:.1f}%",
+             "Precisão": f"{m['precision']*100:.1f}%",
+             "F1": f"{m['f1-score']:.3f}",
+             "Imagens": int(m['support'])}
+            for name, m in per_class.items() if name in friendly
+        ]
+        if rows:
+            rows.sort(key=lambda r: r["F1"], reverse=True)
+            st.dataframe(rows, hide_index=True, width="stretch")
+        if evaluation.get('note'):
+            st.caption(f"⚠️ {evaluation['note']}")
+
+
 def main():
     st.title("🌿 AtlasLeaf")
-    st.markdown("### Diagnóstico Avançado de Doenças da Soja")
-    st.markdown("*Diagnóstico assistido com incerteza e Test-Time Augmentation (TTA)*")
+    st.markdown("### Diagnóstico de doenças da soja")
+    st.markdown("*7 doenças de campo · avaliação em câmera não vista · TTA e detecção de incerteza*")
     st.markdown("---")
-    
-    # Carregar modelo
+
     try:
-        session, metadata, version = load_model()
-        
-        col1, col2 = st.columns(2)
-        with col1:
-            st.success(f"✅ Modelo carregado: {metadata['model']} (v{version})")
-        with col2:
-            tta_status = "🟢 TTA Ativo" if PIPELINE_AVAILABLE else "🟡 TTA Indisponível"
-            st.info(tta_status)
-        
-        with st.expander("ℹ️ Informações do Modelo"):
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                st.write(f"**Versão:** {metadata['version']}")
-                st.write(f"**Arquitetura:** {metadata['model']}")
-            with col2:
-                n_sup = len(metadata.get('supported_class_ids') or metadata.get('classes', []))
-                st.write(f"**Classes:** {n_sup}")
-                metrics = metadata.get('metrics', {})
-                bal = metrics.get('test_balanced_acc')
-                if bal is None:
-                    bal = metadata.get('evaluation', {}).get('test_balanced_acc')
-                    bal = bal * 100 if bal is not None and bal <= 1 else bal
-                st.write(f"**Acurácia balanceada:** {bal:.1f}%" if bal is not None
-                         else "**Acurácia balanceada:** N/A")
-            with col3:
-                st.write(f"**Dataset:** {metadata.get('dataset', 'N/A')}")
-                total = metadata.get('total_images')
-                st.write(f"**Imagens:** {total:,}" if isinstance(total, (int, float)) else "**Imagens:** N/A")
-                calibration = metadata.get('calibration', {})
-                if calibration.get('status') == 'calibrated':
-                    st.write(f"**Limiar calibrado:** {calibration['threshold']:.2f}")
-    
-    except FileNotFoundError as e:
+        metadata = load_metadata()
+    except Exception as e:
         st.error(f"❌ {e}")
         return
-    except Exception as e:
-        st.error(f"❌ Erro ao carregar modelo: {e}")
+
+    render_model_info(metadata)
+
+    if not ONNX_PATH.exists():
+        st.markdown("---")
+        st.warning(MISSING_WEIGHTS_HELP)
         return
-    
+
+    try:
+        load_model()
+    except Exception as e:
+        st.error(f"❌ Erro ao carregar o modelo: {e}")
+        return
+
+    st.caption("🟢 Modelo carregado · " + ("TTA disponível" if PIPELINE_AVAILABLE else "TTA indisponível (sem PyTorch)"))
+
     st.markdown("---")
     
     # Configurações TTA
@@ -388,8 +434,8 @@ def main():
     st.markdown("---")
     st.markdown(
         f"<div style='text-align: center; color: gray;'>"
-        f"🌿 AtlasLeaf v{metadata.get('version', '3.1')} | "
-        f"Modelo: {metadata.get('model', 'EfficientNet-B3')} | "
+        f"🌿 AtlasLeaf {metadata.get('version', 'field7')} | "
+        f"Modelo: {metadata.get('model', 'efficientnet_v2_s')} | "
         f"TTA: {'Ativo' if use_tta else 'Inativo'}"
         f"</div>",
         unsafe_allow_html=True
